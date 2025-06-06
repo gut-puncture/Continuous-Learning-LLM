@@ -52,9 +52,10 @@ global.EventSource = jest.fn(() => ({
 }))
 
 // Mock crypto.randomUUID
+let uuidCounter = 0
 Object.defineProperty(global, 'crypto', {
   value: {
-    randomUUID: () => 'test-uuid-123',
+    randomUUID: () => `test-uuid-${++uuidCounter}`,
   },
 })
 

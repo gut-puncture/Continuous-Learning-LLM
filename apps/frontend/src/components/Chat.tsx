@@ -17,14 +17,13 @@ interface Message {
 export default function Chat() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
-  const [isStreaming, setIsStreaming] = useState(false)
+  const [isLoading, setIsLoading] = useState(false)
   const [threadId, setThreadId] = useState<string>('')
   
   const { user } = useUser()
   const searchParams = useSearchParams()
   const router = useRouter()
   const scrollAreaRef = useRef<HTMLDivElement>(null)
-  const eventSourceRef = useRef<EventSource | null>(null)
 
   // Initialize or get threadId from URL
   useEffect(() => {
@@ -55,10 +54,18 @@ export default function Chat() {
 
   const loadMessages = async () => {
     try {
-      const response = await fetch(`/api/history/${threadId}`)
+      const response = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/history/${threadId}`)
       if (response.ok) {
         const data = await response.json()
-        setMessages(data.messages || [])
+        if (data.messages) {
+          const formattedMessages = data.messages.map((msg: any) => ({
+            id: msg.msg_id.toString(),
+            role: msg.role,
+            content: msg.content,
+            timestamp: new Date(msg.created_at)
+          }))
+          setMessages(formattedMessages)
+        }
       }
     } catch (error) {
       console.error('Failed to load messages:', error)
@@ -66,7 +73,7 @@ export default function Chat() {
   }
 
   const sendMessage = async () => {
-    if (!input.trim() || !user || !threadId || isStreaming) return
+    if (!input.trim() || !user || !threadId || isLoading) return
 
     const userMessage: Message = {
       id: crypto.randomUUID(),
@@ -75,21 +82,14 @@ export default function Chat() {
       timestamp: new Date()
     }
 
-    const assistantMessage: Message = {
-      id: crypto.randomUUID(),
-      role: 'assistant',
-      content: '',
-      timestamp: new Date()
-    }
-
-    // Add both messages to state
-    setMessages(prev => [...prev, userMessage, assistantMessage])
+    // Add user message to UI immediately
+    setMessages(prev => [...prev, userMessage])
     setInput('')
-    setIsStreaming(true)
+    setIsLoading(true)
 
     try {
       // Send message to backend
-      const response = await fetch('/api/chat', {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -105,39 +105,24 @@ export default function Chat() {
         throw new Error('Failed to send message')
       }
 
-      // Start listening to stream
-      const eventSource = new EventSource(`/api/stream/${threadId}`)
-      eventSourceRef.current = eventSource
-
-      eventSource.onmessage = (event) => {
-        const data = JSON.parse(event.data)
-        if (data.delta) {
-          setMessages(prev => {
-            const newMessages = [...prev]
-            const lastMessage = newMessages[newMessages.length - 1]
-            if (lastMessage.role === 'assistant') {
-              lastMessage.content += data.delta
-            }
-            return newMessages
-          })
-        }
+      const data = await response.json()
+      
+      // Add assistant response to UI
+      const assistantMessage: Message = {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: data.assistant.content,
+        timestamp: new Date()
       }
 
-      eventSource.addEventListener('close', () => {
-        setIsStreaming(false)
-        eventSource.close()
-      })
-
-      eventSource.onerror = () => {
-        setIsStreaming(false)
-        eventSource.close()
-      }
+      setMessages(prev => [...prev, assistantMessage])
 
     } catch (error) {
       console.error('Failed to send message:', error)
-      setIsStreaming(false)
-      // Remove the empty assistant message on error
+      // Remove the user message on error
       setMessages(prev => prev.slice(0, -1))
+    } finally {
+      setIsLoading(false)
     }
   }
 
@@ -147,15 +132,6 @@ export default function Chat() {
       sendMessage()
     }
   }
-
-  // Cleanup event source on unmount
-  useEffect(() => {
-    return () => {
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close()
-      }
-    }
-  }, [])
 
   return (
     <div className="flex flex-col h-[calc(100vh-4rem)] max-w-4xl mx-auto p-4">
@@ -175,16 +151,20 @@ export default function Chat() {
                 }`}
               >
                 <p className="whitespace-pre-wrap">{message.content}</p>
-                {message.content === '' && message.role === 'assistant' && isStreaming && (
-                  <div className="flex space-x-1">
-                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-100"></div>
-                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-200"></div>
-                  </div>
-                )}
               </div>
             </div>
           ))}
+          {isLoading && (
+            <div className="flex justify-start">
+              <div className="bg-gray-800 text-gray-100 mr-auto max-w-[70%] p-3 rounded-lg">
+                <div className="flex space-x-1">
+                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-100"></div>
+                  <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-200"></div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </ScrollArea>
 
@@ -196,14 +176,14 @@ export default function Chat() {
           onKeyDown={handleKeyPress}
           placeholder="Type your message..."
           className="flex-1 min-h-[60px] bg-gray-900 border-gray-700 text-white resize-none"
-          disabled={isStreaming}
+          disabled={isLoading}
         />
         <Button
           onClick={sendMessage}
-          disabled={!input.trim() || isStreaming}
+          disabled={!input.trim() || isLoading}
           className="self-end h-[60px] px-6 bg-blue-600 hover:bg-blue-700"
         >
-          Send
+          {isLoading ? 'Sending...' : 'Send'}
         </Button>
       </div>
     </div>

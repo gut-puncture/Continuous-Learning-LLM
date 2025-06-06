@@ -5,7 +5,7 @@ A work in progress Continuous Learning LLM System.
 ## Tech Stack
 
 - **Frontend:** Next.js 15, React 19, shadcn/ui, Tailwind CSS, TypeScript
-- **Backend:** Node 22, Fastify, TypeScript, `ai`-sdk for streaming GPT-4o  
+- **Backend:** Node 22, Fastify v5, TypeScript, OpenAI SDK (direct, non-streaming)  
 - **Database:** Heroku Postgres + `pgvector` extension
 - **Auth:** NextAuth.js with Google OAuth
 - **Deployment:** Frontend → Vercel, Backend & workers → Heroku
