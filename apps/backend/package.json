@@ -1,0 +1,26 @@
+{
+  "name": "@mini-clm/backend",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "nodemon",
+    "start": "node dist/index.js",
+    "lint": "eslint . --max-warnings 0",
+    "check-types": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@mini-clm/db": "workspace:*",
+    "fastify": "^5.2.0",
+    "ai": "^4.0.33",
+    "openai": "^4.80.1"
+  },
+  "devDependencies": {
+    "@mini-clm/eslint-config": "workspace:*",
+    "@types/node": "^22.15.30",
+    "nodemon": "^3.1.9",
+    "tsx": "^4.19.2",
+    "typescript": "^5.8.3"
+  }
+} 

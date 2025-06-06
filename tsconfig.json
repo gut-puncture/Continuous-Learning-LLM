@@ -1,0 +1,21 @@
+{
+  "extends": "@mini-clm/eslint-config/tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@mini-clm/*": ["packages/*/src"]
+    }
+  },
+  "include": [],
+  "references": [
+    {
+      "path": "./apps/frontend"
+    },
+    {
+      "path": "./apps/backend"
+    },
+    {
+      "path": "./packages/db"
+    }
+  ]
+} 
