@@ -1,1 +1,1 @@
-A work in progress General Agent.
+A work in progress Continuous Learning LLM System.
