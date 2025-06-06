@@ -45,6 +45,11 @@ jobs:
         run: pnpm install --frozen-lockfile
         
       - name: Build packages
+        env:
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
+          NEXTAUTH_URL: http://localhost:3000
         run: pnpm turbo build
         
       - name: Lint packages

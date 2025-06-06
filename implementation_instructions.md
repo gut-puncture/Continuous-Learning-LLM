@@ -5,7 +5,7 @@
 
   * Frontend — Next.js 15, React 19, shadcn/ui, Tailwind CSS, TypeScript.
   * Backend — Node 20 Fastify, TypeScript, `ai`-sdk for streaming GPT 4o.
-  * Database — Heroku Postgres (Mini dyno) + `pgvector` extension.
+  * Database — Heroku Postgres (Essential-0 plan) + `pgvector` extension.
   * Auth — NextAuth.js with Google OAuth.
   * Deployment:
 
@@ -35,6 +35,87 @@
 ---
 
 CURRENTLY IMPLEMENTING THIS:
+## PHASE 1 Bare-bones chat & auth
+
+### Goal
+
+End-to-end chat: user logs in with Google, types a message, backend relays it to GPT-4o, response streams back.
+
+---
+
+### 1.1 Google OAuth & NextAuth
+
+> **Task 1.1**
+> Implement NextAuth in `/apps/frontend`.
+> • Provider: Google. Use env vars.
+> • Session: JWT, 30-day expiry.
+> • Expose a React hook `useUser()` in `src/hooks/useUser.tsx`.
+> • Protect `/chat` route: redirect to `/api/auth/signin` if unauthenticated.
+> • Show user avatar + sign-out button in header.
+
+---
+
+### 1.2 Chat UI component
+
+> **Task 1.2**
+> Build `<Chat />` component with shadcn/ui.
+> • Input textarea, send on `Ctrl+Enter`.
+> • Message list shows bubbles L= user, R = assistant.
+> • Messages stream via EventSource from `/api/stream`.
+> • Maintain `threadId` in React state.
+
+---
+
+### 1.3 Backend `/chat` & `/stream` routes
+
+**Prompt to GPT-4o**
+
+> **Task 1.3**
+> In Fastify:
+> • `POST /chat` body `{userId, threadId, content}`
+> – Call OpenAI chat completion (model `gpt-4o`) **stream = true**.
+> – Insert **two** DB rows: user message & assistant placeholder (empty content).
+> – Emit SSE events on `/stream/:threadId` (`data: {delta}`) as tokens arrive.
+> – When stream ends, update assistant row with full content.
+> • Provide basic error handling + CORS for Vercel origin `${NEXT_PUBLIC_APP_URL}`.
+
+---
+
+### 1.4 DB “messages” table migration
+
+
+> **Task 1.4**
+> Using Drizzle ORM, generate a migration that creates
+>
+> ```ts
+> messages (
+>   msg_id      bigserial primary key,
+>   user_id     uuid not null,
+>   thread_id   uuid not null,
+>   role        text check (role in ('user','assistant')),
+>   created_at  timestamptz default now(),
+>   content     text,
+>   token_cnt   int
+> )
+> ```
+>
+> Add helper `insertMessage({})` and `getThreadMessages(threadId)`.
+
+---
+
+### 1.5 Chat history page
+
+**Prompt to GPT-4o**
+
+> **Task 1.5**
+> Create `/history` route (protected).
+> • Query `SELECT DISTINCT thread_id, max(created_at) ...` to list conversations.
+> • Clicking an item navigates to `/chat?threadId=…` and loads previous messages via `/api/history/:threadId`.
+
+
+
+
+ALREADY IMPLEMENTED
 
 # PHASE 0 Repo + infra bootstrap
 
@@ -71,8 +152,8 @@ I'll add those repo secrets.
 ### 0.3 Provision database
 
 1. `heroku create mini-clm-backend`.
-2. `heroku addons:create heroku-postgresql:mini`.
-3. `heroku psql -c "CREATE EXTENSION IF NOT EXISTS vector;"`.
+2. `heroku addons:create heroku-postgresql:essential-0` (Note: mini plan is no longer available).
+3. `heroku pg:psql --app mini-clm-backend -c "CREATE EXTENSION IF NOT EXISTS vector;"`.
 4. I'll give you the details, you then copy `DATABASE_URL` into Heroku config & GitHub secrets.
 
 ---
@@ -89,3 +170,16 @@ I'll add those repo secrets.
 > • `/apps/backend` with Fastify v4, ESM, TypeScript, nodemon script.
 > • Export `/healthz` route returning `{ok:true}`.
 > • Add `Procfile` → `web: pnpm start`.
+
+
+
+
+llm_instructions = """
+Global Context is given in implementation instructions. If the current versions or implementation details don't align with what is in the global context, please update the implementation instructions file.
+
+First understand the existing codebase so you get how everything is setup. I recommend looking at the repo structure and reading the files. Also, remember that "/Users/Shailesh/Applications/Cursor/CLM_self_coded/" is the root folder. Also, please remember what we have done and the code we have and how the new changes will affect the existing code. Feel free to create tasks to update the existing code if needed.
+
+We want to do task 1.2 in implementation instructions. Plan first WITHOUT writing ANY code and ask me questions if you have any. Then we'll write the code.
+"""
+
+
