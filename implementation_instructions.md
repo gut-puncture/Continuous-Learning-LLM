@@ -60,8 +60,8 @@ End-to-end chat: user logs in with Google, types a message, backend relays it to
 
 > **Task 1.2**
 > Build `<Chat />` component with shadcn/ui.
-> • Input textarea, send on `Ctrl+Enter`.
-> • Message list shows bubbles L= user, R = assistant.
+> • Input textarea, send on `Enter`.
+> • Message list shows bubbles L= assistant, R = user.
 > • Messages use simple request-response (no streaming).
 > • Updated to call backend directly via `process.env.NEXT_PUBLIC_BACKEND_URL`.
 > • Maintain `threadId` in React state.
@@ -188,4 +188,8 @@ First understand the existing codebase so you get how everything is setup. I rec
 We want to do resolve the bugs which came after implementing task 1.2 in implementation instructions. Plan first WITHOUT writing ANY code and ask me questions if you have any. Then we'll write the code.
 """
 
+#Questions to answer
+1. What happens if a user who is not signed up comes to the website and starts chatting? We shouldn't allow this ideally because every other handling is tedious. But what is happening right now?
+2. there is no apps/frontend/src/app/history page. How do we handle past threads?
+3. 
 

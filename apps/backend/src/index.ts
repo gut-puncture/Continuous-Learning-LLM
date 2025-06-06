@@ -75,7 +75,7 @@ fastify.post<{
       model: 'gpt-4o-2024-08-06',
       messages: openaiMessages,
       stream: false,
-      temperature: 0.7
+      temperature: 1
     });
 
     const assistantContent = response.choices[0]?.message?.content || '';
