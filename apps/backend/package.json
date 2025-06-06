@@ -25,7 +25,6 @@
     "uuid": "^11.0.4"
   },
   "devDependencies": {
-    "@mini-clm/eslint-config": "workspace:*",
     "@types/jest": "^29.5.14",
     "@types/node": "^22.15.30",
     "@types/supertest": "^6.0.2",
