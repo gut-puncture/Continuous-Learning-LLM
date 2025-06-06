@@ -1,11 +1,11 @@
 // Database package main export file
-export * from './schema';
-export * from './types'; 
+export * from './schema.js';
+export * from './types.js'; 
 
 import { drizzle } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 import { eq, desc } from 'drizzle-orm'
-import { messages, type NewMessage, type Message } from './schema'
+import { messages, type NewMessage, type Message } from './schema.js'
 
 // Database connection
 const connectionString = process.env.DATABASE_URL!
