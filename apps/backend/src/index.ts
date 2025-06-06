@@ -3,6 +3,7 @@ import cors from '@fastify/cors';
 import OpenAI from 'openai';
 import { v4 as uuidv4 } from 'uuid';
 import { insertMessage, getThreadMessages, type Message } from './db/index.js';
+import { countTokens } from './utils/tokenizer.js';
 
 // Initialize Fastify
 const fastify = Fastify({
@@ -61,13 +62,16 @@ fastify.post<{
       content: content
     });
 
+    // Count tokens for the user message
+    const userTokens = countTokens(content, 'gpt-4o-2024-08-06');
+
     // Insert user message into database
     await insertMessage({
       user_id: userId,
       thread_id: threadId,
       role: 'user',
       content: content,
-      token_cnt: 0
+      token_cnt: userTokens
     });
 
     // Call OpenAI
