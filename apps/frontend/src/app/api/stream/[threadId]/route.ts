@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { threadId: string } }
+  context: { params: Promise<{ threadId: string }> }
 ) {
-  const { threadId } = params
+  const { threadId } = await context.params
 
   // Placeholder response - will be implemented in Task 1.3
   console.log('Stream request for threadId:', threadId)
