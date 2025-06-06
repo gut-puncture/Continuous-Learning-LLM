@@ -26,6 +26,8 @@ export default function Chat() {
   const router = useRouter()
   const scrollAreaRef = useRef<HTMLDivElement>(null)
 
+  // ALL HOOKS MUST BE CALLED BEFORE ANY CONDITIONAL RETURNS
+
   // Redirect unauthenticated users
   useEffect(() => {
     if (!userLoading && !isAuthenticated) {
@@ -33,36 +35,19 @@ export default function Chat() {
     }
   }, [userLoading, isAuthenticated])
 
-  // Show loading while checking authentication
-  if (userLoading) {
-    return (
-      <div className="flex items-center justify-center h-[calc(100vh-4rem)]">
-        <div className="text-gray-500">Checking authentication...</div>
-      </div>
-    )
-  }
-
-  // Don't render chat if not authenticated
-  if (!isAuthenticated || !user) {
-    return (
-      <div className="flex items-center justify-center h-[calc(100vh-4rem)]">
-        <div className="text-gray-500">Redirecting to sign in...</div>
-      </div>
-    )
-  }
-
   // Initialize or get threadId from URL
   useEffect(() => {
-    const urlThreadId = searchParams.get('threadId')
-    if (urlThreadId) {
-      setThreadId(urlThreadId)
-    } else {
-      // Generate new threadId and update URL
-      const newThreadId = crypto.randomUUID()
-      setThreadId(newThreadId)
-      router.replace(`/chat?threadId=${newThreadId}`)
+    if (isAuthenticated) {
+      const urlThreadId = searchParams.get('threadId')
+      if (urlThreadId) {
+        setThreadId(urlThreadId)
+      } else {
+        const newThreadId = crypto.randomUUID()
+        setThreadId(newThreadId)
+        router.replace(`/chat?threadId=${newThreadId}`)
+      }
     }
-  }, [searchParams, router])
+  }, [searchParams, router, isAuthenticated])
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -71,13 +56,14 @@ export default function Chat() {
     }
   }, [messages])
 
-  // Load existing messages when threadId changes
+  // Load existing messages when threadId and user are available
   useEffect(() => {
-    if (threadId && user) {
+    if (threadId && user && isAuthenticated) {
       loadMessages()
     }
-  }, [threadId, user])
+  }, [threadId, user, isAuthenticated])
 
+  // Helper function for loading messages
   const loadMessages = async () => {
     try {
       const response = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/history/${threadId}`)
@@ -96,6 +82,26 @@ export default function Chat() {
     } catch (error) {
       console.error('Failed to load messages:', error)
     }
+  }
+
+  // NOW SAFE TO HAVE CONDITIONAL RETURNS
+
+  // Show loading while checking authentication
+  if (userLoading) {
+    return (
+      <div className="flex items-center justify-center h-[calc(100vh-4rem)]">
+        <div className="text-gray-500">Checking authentication...</div>
+      </div>
+    )
+  }
+
+  // Don't render chat if not authenticated
+  if (!isAuthenticated || !user) {
+    return (
+      <div className="flex items-center justify-center h-[calc(100vh-4rem)]">
+        <div className="text-gray-500">Redirecting to sign in...</div>
+      </div>
+    )
   }
 
   const sendMessage = async () => {
