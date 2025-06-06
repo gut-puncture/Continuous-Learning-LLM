@@ -6,7 +6,7 @@ import { sql } from 'drizzle-orm'
 
 export const messages = pgTable('messages', {
   msg_id: bigserial('msg_id', { mode: 'number' }).primaryKey(),
-  user_id: uuid('user_id').notNull(),
+  user_id: text('user_id').notNull(),
   thread_id: uuid('thread_id').notNull(),
   role: text('role').notNull(),
   created_at: timestamp('created_at', { withTimezone: true }).defaultNow(),
