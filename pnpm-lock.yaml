@@ -20,6 +20,9 @@ importers:
 
   apps/backend:
     dependencies:
+      '@dqbd/tiktoken':
+        specifier: ^1.0.21
+        version: 1.0.21
       '@fastify/cors':
         specifier: ^10.0.1
         version: 10.1.0
@@ -439,6 +442,9 @@ packages:
   '@csstools/css-tokenizer@3.0.4':
     resolution: {integrity: sha512-Vd/9EVDiu6PPJt9yAh6roZP6El1xHrdvIVGjyBsHR0RYwNHgL7FJPyIIW4fANJNG6FtyZfvlRPpFI4ZM/lubvw==}
     engines: {node: '>=18'}
+
+  '@dqbd/tiktoken@1.0.21':
+    resolution: {integrity: sha512-grBxRSY9+/iBM205EWjbMm5ySeXQrhJyXWMP38VJd+pO2DRGraDAbi4n8J8T9M4XY1M/FHgonMcmu3J+KjcX0Q==}
 
   '@drizzle-team/brocli@0.10.2':
     resolution: {integrity: sha512-z33Il7l5dKjUgGULTqBsQBQwckHh5AbIuxhdsIxDDiZAzBOrZO6q9ogcWC65kU382AfynTfgNumVcNIjuIua6w==}
@@ -4504,6 +4510,8 @@ snapshots:
       '@csstools/css-tokenizer': 3.0.4
 
   '@csstools/css-tokenizer@3.0.4': {}
+
+  '@dqbd/tiktoken@1.0.21': {}
 
   '@drizzle-team/brocli@0.10.2': {}
 
