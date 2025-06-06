@@ -193,7 +193,7 @@ We want to do resolve the bug with the disappearing messages. Plan first WITHOUT
 2. there is no apps/frontend/src/app/history page. How do we handle past threads?
 
 #Bugs
-1. the thread id persists when you open the window again even when using the base URL.
-2. Messages disappear immediately
-3. no tables in heroku
+1. the token count is not visible for messages sent by the user in the database table.
+2. 
+3. 
 

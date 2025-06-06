@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useUser } from '@/hooks/useUser'
+import { signIn } from 'next-auth/react'
 
 interface Message {
   id: string
@@ -20,10 +21,35 @@ export default function Chat() {
   const [isLoading, setIsLoading] = useState(false)
   const [threadId, setThreadId] = useState<string>('')
   
-  const { user } = useUser()
+  const { user, isLoading: userLoading, isAuthenticated } = useUser()
   const searchParams = useSearchParams()
   const router = useRouter()
   const scrollAreaRef = useRef<HTMLDivElement>(null)
+
+  // Redirect unauthenticated users
+  useEffect(() => {
+    if (!userLoading && !isAuthenticated) {
+      signIn('google', { callbackUrl: '/chat' })
+    }
+  }, [userLoading, isAuthenticated])
+
+  // Show loading while checking authentication
+  if (userLoading) {
+    return (
+      <div className="flex items-center justify-center h-[calc(100vh-4rem)]">
+        <div className="text-gray-500">Checking authentication...</div>
+      </div>
+    )
+  }
+
+  // Don't render chat if not authenticated
+  if (!isAuthenticated || !user) {
+    return (
+      <div className="flex items-center justify-center h-[calc(100vh-4rem)]">
+        <div className="text-gray-500">Redirecting to sign in...</div>
+      </div>
+    )
+  }
 
   // Initialize or get threadId from URL
   useEffect(() => {

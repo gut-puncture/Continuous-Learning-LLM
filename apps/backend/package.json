@@ -17,11 +17,11 @@
     "test:coverage": "jest --coverage"
   },
   "dependencies": {
-    "@dqbd/tiktoken": "^1.0.21",
     "@fastify/cors": "^10.0.1",
     "drizzle-kit": "^0.31.1",
     "drizzle-orm": "^0.37.0",
     "fastify": "^5.2.0",
+    "js-tiktoken": "^1.0.20",
     "openai": "^4.80.1",
     "postgres": "^3.4.5",
     "uuid": "^11.0.4"
