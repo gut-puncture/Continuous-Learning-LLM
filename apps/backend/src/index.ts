@@ -2,7 +2,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import OpenAI from 'openai';
 import { v4 as uuidv4 } from 'uuid';
-import { insertMessage, getThreadMessages, type Message } from '@mini-clm/db';
+import { insertMessage, getThreadMessages, type Message } from './db/index.js';
 
 // Initialize Fastify
 const fastify = Fastify({

@@ -181,15 +181,19 @@ I'll add those repo secrets.
 
 
 llm_instructions = """
-Global Context is given in implementation instructions. If the current versions or implementation details don't align with what is in the global context, please update the implementation instructions file.
+The task details are given in the implementation instructions file.
 
 First understand the existing codebase so you get how everything is setup. I recommend looking at the repo structure and reading the files. Also, remember that "/Users/Shailesh/Applications/Cursor/CLM_self_coded/" is the root folder. Also, please remember what we have done and the code we have and how the new changes will affect the existing code. Feel free to create tasks to update the existing code if needed.
 
-We want to do resolve the bugs which came after implementing task 1.2 in implementation instructions. Plan first WITHOUT writing ANY code and ask me questions if you have any. Then we'll write the code.
+We want to do resolve the bug with the disappearing messages. Plan first WITHOUT writing ANY code and ask me questions if you have any. Then we'll write the code.
 """
 
 #Questions to answer
 1. What happens if a user who is not signed up comes to the website and starts chatting? We shouldn't allow this ideally because every other handling is tedious. But what is happening right now?
 2. there is no apps/frontend/src/app/history page. How do we handle past threads?
-3. 
+
+#Bugs
+1. the thread id persists when you open the window again even when using the base URL.
+2. Messages disappear immediately
+3. no tables in heroku
 
