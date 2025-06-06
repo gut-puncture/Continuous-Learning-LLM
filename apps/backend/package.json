@@ -18,15 +18,15 @@
   },
   "dependencies": {
     "@fastify/cors": "^10.0.1",
-    "drizzle-kit": "^0.31.1",
     "drizzle-orm": "^0.37.0",
     "fastify": "^5.2.0",
-    "js-tiktoken": "^1.0.20",
+    "gpt-tokenizer": "^2.1.2",
     "openai": "^4.80.1",
     "postgres": "^3.4.5",
     "uuid": "^11.0.4"
   },
   "devDependencies": {
+    "drizzle-kit": "^0.31.1",
     "@types/jest": "^29.5.14",
     "@types/node": "^22.15.30",
     "@types/supertest": "^6.0.2",

@@ -63,14 +63,8 @@ fastify.post<{
     });
 
     // Count tokens for the user message
-    let userTokens = 0;
-    try {
-      userTokens = countTokens(content, 'gpt-4o-2024-08-06');
-      fastify.log.info(`Counted ${userTokens} tokens for user message: "${content}"`);
-    } catch (error) {
-      fastify.log.error('Failed to count tokens:', error);
-      userTokens = 0;
-    }
+    const userTokens = countTokens(content);
+    fastify.log.info(`Counted ${userTokens} tokens for user message: "${content}"`);
 
     // Insert user message into database
     await insertMessage({
