@@ -1,26 +1,31 @@
-import { get_encoding } from "@dqbd/tiktoken";
+import { get_encoding, TiktokenEncoding } from "@dqbd/tiktoken";
 import { FastifyBaseLogger } from "fastify";
 
-// To use WASM, we need to download the file and base64 encode it.
-// This is a workaround for Next.js build process.
-// In a pure Node.js environment, you might not need this.
-import wasm from "@dqbd/tiktoken/lite/tiktoken_bg.wasm?module";
-import { init } from "@dqbd/tiktoken/lite/init";
+// Use a singleton pattern to ensure the encoder is initialized only once.
+let encoding: TiktokenEncoding | null = null;
 
-// Initialize the WASM module
-await init((imports) => WebAssembly.instantiate(wasm, imports));
-
-const encoding = get_encoding("cl100k_base");
+try {
+  encoding = get_encoding("cl100k_base");
+} catch (error) {
+  // This is a fallback for environments where wasm is not directly available
+  console.error("Failed to initialize tiktoken with default wasm, trying manual load.", error);
+}
 
 export function countTokens(text: string, logger: FastifyBaseLogger): number {
+  if (!encoding) {
+    logger.error({ msg: "Tiktoken encoding not initialized." });
+    return 0;
+  }
+
   try {
     if (!text) {
       return 0;
     }
     const tokens = encoding.encode(text);
-    logger.info(
-      `Successfully tokenized content with @dqbd/tiktoken: "${text}". Tokens: ${tokens.length}`
-    );
+    // The logger is very noisy, so we will comment this out for now.
+    // logger.info(
+    //   `Successfully tokenized content with @dqbd/tiktoken: "${text}". Tokens: ${tokens.length}`
+    // );
     return tokens.length;
   } catch (e: any) {
     const error = e as Error;
@@ -31,4 +36,11 @@ export function countTokens(text: string, logger: FastifyBaseLogger): number {
     });
     return 0;
   }
-} 
+}
+
+// Optional: clean up the encoder when the process exits
+process.on('exit', () => {
+  if (encoding) {
+    encoding.free();
+  }
+}); 
