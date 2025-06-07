@@ -2,7 +2,7 @@ import { get_encoding } from "@dqbd/tiktoken";
 
 console.log("Tokenizer module loading...");
 
-let encoding: any = null;
+let encoding: ReturnType<typeof get_encoding> | null = null;
 
 try {
   encoding = get_encoding("cl100k_base");
@@ -27,8 +27,9 @@ export function countTokens(text: string): number {
     const tokens = encoding.encode(text);
     console.log(`SUCCESS in countTokens: ${tokens.length} tokens counted for: "${text}"`);
     return tokens.length;
-  } catch (e: any) {
-    console.error("ERROR in countTokens: Failed to encode text:", e?.message || e);
+  } catch (e: unknown) {
+    const error = e as Error;
+    console.error("ERROR in countTokens: Failed to encode text:", error?.message || error);
     return 0;
   } finally {
     // No need to call free() on every call, as it disposes the encoding
@@ -37,6 +38,7 @@ export function countTokens(text: string): number {
 
 process.on('exit', () => {
     if (encoding) {
-      encoding.free();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (encoding as any).free();
     }
   }); 

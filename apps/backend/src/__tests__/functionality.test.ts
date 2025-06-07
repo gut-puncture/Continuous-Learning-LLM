@@ -66,7 +66,11 @@ describe('Backend Functionality Tests', () => {
     });
 
     test('should reject request without userId', () => {
-      const invalidRequest: any = {
+      const invalidRequest: {
+        threadId: string;
+        content: string;
+        userId?: string;
+      } = {
         threadId: 'thread-456',
         content: 'Hello, world!'
         // missing userId
@@ -77,7 +81,11 @@ describe('Backend Functionality Tests', () => {
     });
 
     test('should reject request without content', () => {
-      const invalidRequest: any = {
+      const invalidRequest: {
+        userId: string;
+        threadId: string;
+        content?: string;
+      } = {
         userId: 'user-123',
         threadId: 'thread-456'
         // missing content
