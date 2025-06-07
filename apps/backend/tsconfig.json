@@ -1,5 +1,4 @@
 {
-  "extends": "@mini-clm/config/tsconfig.base.json",
   "compilerOptions": {
     "outDir": "./dist",
     "rootDir": "./src",
@@ -12,7 +11,8 @@
     "strict": true,
     "skipLibCheck": true,
     "declaration": false,
-    "sourceMap": false
+    "sourceMap": false,
+    "noEmitOnError": false
   },
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist", "**/*.test.ts"]

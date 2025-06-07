@@ -1,8 +1,8 @@
-import { get_encoding, TiktokenEncoding } from "@dqbd/tiktoken";
+import { get_encoding } from "@dqbd/tiktoken";
 
 console.log("Tokenizer module loading...");
 
-let encoding: TiktokenEncoding | null = null;
+let encoding: any = null;
 
 try {
   encoding = get_encoding("cl100k_base");
@@ -21,19 +21,17 @@ export function countTokens(text: string): number {
 
   try {
     if (!text) {
-      console.log("WARN in countTokens: input text is empty.");
+      console.log("WARN in countTokens: Empty text, returning 0 tokens.");
       return 0;
     }
     const tokens = encoding.encode(text);
-    console.log(`Successfully tokenized content. Tokens: ${tokens.length}`);
+    console.log(`SUCCESS in countTokens: ${tokens.length} tokens counted for: "${text}"`);
     return tokens.length;
   } catch (e: any) {
-    const error = e as Error;
-    console.error("ERROR in countTokens during encoding:", {
-      message: error.message,
-      stack: error.stack,
-    });
+    console.error("ERROR in countTokens: Failed to encode text:", e?.message || e);
     return 0;
+  } finally {
+    // No need to call free() on every call, as it disposes the encoding
   }
 }
 
