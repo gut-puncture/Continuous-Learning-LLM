@@ -1,12 +1,10 @@
 "use client"
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { useSearchParams, useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useUser } from '@/hooks/useUser'
-import { signIn } from 'next-auth/react'
 
 interface Message {
   id: string
@@ -15,39 +13,20 @@ interface Message {
   timestamp: Date
 }
 
-export default function Chat() {
+interface ChatProps {
+  threadId: string
+  onMessageSent?: () => void
+}
+
+export default function Chat({ threadId, onMessageSent }: ChatProps) {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
-  const [threadId, setThreadId] = useState<string>('')
   
-  const { user, isLoading: userLoading, isAuthenticated } = useUser()
-  const searchParams = useSearchParams()
-  const router = useRouter()
+  const { user, isAuthenticated } = useUser()
   const scrollAreaRef = useRef<HTMLDivElement>(null)
 
   // ALL HOOKS MUST BE CALLED BEFORE ANY CONDITIONAL RETURNS
-
-  // Redirect unauthenticated users
-  useEffect(() => {
-    if (!userLoading && !isAuthenticated) {
-      signIn('google', { callbackUrl: '/chat' })
-    }
-  }, [userLoading, isAuthenticated])
-
-  // Initialize or get threadId from URL
-  useEffect(() => {
-    if (isAuthenticated) {
-      const urlThreadId = searchParams.get('threadId')
-      if (urlThreadId) {
-        setThreadId(urlThreadId)
-      } else {
-        const newThreadId = crypto.randomUUID()
-        setThreadId(newThreadId)
-        router.replace(`/chat?threadId=${newThreadId}`)
-      }
-    }
-  }, [searchParams, router, isAuthenticated])
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -87,20 +66,11 @@ export default function Chat() {
 
   // NOW SAFE TO HAVE CONDITIONAL RETURNS
 
-  // Show loading while checking authentication
-  if (userLoading) {
+  // Don't render chat if not authenticated (should be handled by ChatLayout)
+  if (!isAuthenticated || !user || !threadId) {
     return (
-      <div className="flex items-center justify-center h-[calc(100vh-4rem)]">
-        <div className="text-gray-500">Checking authentication...</div>
-      </div>
-    )
-  }
-
-  // Don't render chat if not authenticated
-  if (!isAuthenticated || !user) {
-    return (
-      <div className="flex items-center justify-center h-[calc(100vh-4rem)]">
-        <div className="text-gray-500">Redirecting to sign in...</div>
+      <div className="flex items-center justify-center h-full">
+        <div className="text-gray-500">Loading chat...</div>
       </div>
     )
   }
@@ -150,6 +120,9 @@ export default function Chat() {
 
       setMessages(prev => [...prev, assistantMessage])
 
+      // Notify parent that a message was sent (for sidebar refresh)
+      onMessageSent?.()
+
     } catch (error) {
       console.error('Failed to send message:', error)
       // Remove the user message on error
@@ -167,7 +140,7 @@ export default function Chat() {
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-4rem)] max-w-4xl mx-auto p-4">
+    <div className="flex flex-col h-full max-w-4xl mx-auto p-4">
       {/* Messages area */}
       <ScrollArea ref={scrollAreaRef} className="flex-1 pr-4 mb-4">
         <div className="space-y-4">

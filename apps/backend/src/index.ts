@@ -2,7 +2,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import OpenAI from 'openai';
 import { v4 as uuidv4 } from 'uuid';
-import { insertMessage, getThreadMessages, type Message } from './db/index.js';
+import { insertMessage, getThreadMessages, getThreadsByUser, updateThreadName, type Message, type ThreadSummary } from './db/index.js';
 import { countTokens } from './utils/tokenizer.js';
 
 // Initialize Fastify
@@ -18,7 +18,7 @@ const openai = new OpenAI({
 // Register CORS
 await fastify.register(cors, {
   origin: process.env.FRONTEND_URL,
-  methods: ['GET', 'POST'],
+  methods: ['GET', 'POST', 'PUT'],
   allowedHeaders: ['Content-Type'],
   credentials: true
 });
@@ -126,6 +126,44 @@ fastify.get<{
         created_at: msg.created_at?.toISOString() || new Date().toISOString()
       }))
     };
+  } catch (error) {
+    fastify.log.error(error);
+    return reply.code(500).send({ error: 'Internal server error' });
+  }
+});
+
+// Get threads for a user
+fastify.get<{
+  Params: { userId: string };
+}>('/threads/:userId', async (request, reply) => {
+  try {
+    const { userId } = request.params;
+    
+    const threads = await getThreadsByUser(userId);
+    
+    return { threads };
+  } catch (error) {
+    fastify.log.error(error);
+    return reply.code(500).send({ error: 'Internal server error' });
+  }
+});
+
+// Update thread name
+fastify.put<{
+  Params: { threadId: string };
+  Body: { name: string };
+}>('/threads/:threadId/name', async (request, reply) => {
+  try {
+    const { threadId } = request.params;
+    const { name } = request.body;
+    
+    if (!name || typeof name !== 'string') {
+      return reply.code(400).send({ error: 'Name is required and must be a string' });
+    }
+    
+    await updateThreadName(threadId, name);
+    
+    return { success: true, name };
   } catch (error) {
     fastify.log.error(error);
     return reply.code(500).send({ error: 'Internal server error' });

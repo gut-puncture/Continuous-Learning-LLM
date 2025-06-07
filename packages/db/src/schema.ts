@@ -11,7 +11,8 @@ export const messages = pgTable('messages', {
   role: text('role').notNull(),
   created_at: timestamp('created_at', { withTimezone: true }).defaultNow(),
   content: text('content'),
-  token_cnt: integer('token_cnt')
+  token_cnt: integer('token_cnt'),
+  thread_name: text('thread_name')
 }, (table) => ({
   roleCheck: check('role_check', sql`${table.role} in ('user', 'assistant')`)
 }))
