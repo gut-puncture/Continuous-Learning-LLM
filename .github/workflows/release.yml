@@ -46,6 +46,12 @@ jobs:
         run: pnpm install --frozen-lockfile
         
       - name: Build packages
+        env:
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
+          NEXTAUTH_URL: https://clm-self-coded.vercel.app
+          NEXT_PUBLIC_BACKEND_URL: https://mini-clm-backend-4a0abebc9a65.herokuapp.com
         run: pnpm turbo build
         
       - name: Upload build artifacts
