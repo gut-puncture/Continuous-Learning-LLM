@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { signIn, signOut } from 'next-auth/react'
 import Header from '../Header'
+import { useUser } from '../../hooks/useUser'
 
 // Mock next-auth
 jest.mock('next-auth/react')
@@ -9,6 +10,7 @@ jest.mock('../../hooks/useUser')
 
 const mockSignIn = signIn as jest.MockedFunction<typeof signIn>
 const mockSignOut = signOut as jest.MockedFunction<typeof signOut>
+const mockUseUser = useUser as jest.MockedFunction<typeof useUser>
 
 describe('Header Component', () => {
   beforeEach(() => {
@@ -18,10 +20,11 @@ describe('Header Component', () => {
   describe('Loading State', () => {
     it('should show loading state', () => {
       // Mock useUser hook for loading state
-      const { useUser } = require('../../hooks/useUser')
-      useUser.mockReturnValue({
+      mockUseUser.mockReturnValue({
         user: null,
+        status: 'loading',
         isLoading: true,
+        isAuthenticated: false,
       })
 
       render(<Header />)
@@ -33,14 +36,15 @@ describe('Header Component', () => {
 
   describe('Authenticated User', () => {
     beforeEach(() => {
-      const { useUser } = require('../../hooks/useUser')
-      useUser.mockReturnValue({
+      mockUseUser.mockReturnValue({
         user: {
           name: 'John Doe',
           email: 'john@example.com',
           image: 'https://example.com/avatar.jpg',
         },
+        status: 'authenticated',
         isLoading: false,
+        isAuthenticated: true,
       })
     })
 
@@ -83,10 +87,11 @@ describe('Header Component', () => {
 
   describe('Unauthenticated User', () => {
     beforeEach(() => {
-      const { useUser } = require('../../hooks/useUser')
-      useUser.mockReturnValue({
+      mockUseUser.mockReturnValue({
         user: null,
+        status: 'unauthenticated',
         isLoading: false,
+        isAuthenticated: false,
       })
     })
 

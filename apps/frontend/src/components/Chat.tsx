@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -56,21 +56,15 @@ export default function Chat() {
     }
   }, [messages])
 
-  // Load existing messages when threadId and user are available
-  useEffect(() => {
-    if (threadId && user && isAuthenticated) {
-      loadMessages()
-    }
-  }, [threadId, user, isAuthenticated])
-
   // Helper function for loading messages
-  const loadMessages = async () => {
+  const loadMessages = useCallback(async () => {
+    if (!threadId) return
     try {
       const response = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/history/${threadId}`)
       if (response.ok) {
         const data = await response.json()
         if (data.messages) {
-          const formattedMessages = data.messages.map((msg: any) => ({
+          const formattedMessages = data.messages.map((msg: { msg_id: number; role: string; content: string; created_at: string }) => ({
             id: msg.msg_id.toString(),
             role: msg.role,
             content: msg.content,
@@ -82,7 +76,14 @@ export default function Chat() {
     } catch (error) {
       console.error('Failed to load messages:', error)
     }
-  }
+  }, [threadId])
+
+  // Load existing messages when threadId and user are available
+  useEffect(() => {
+    if (threadId && user && isAuthenticated) {
+      loadMessages()
+    }
+  }, [threadId, user, isAuthenticated, loadMessages])
 
   // NOW SAFE TO HAVE CONDITIONAL RETURNS
 
