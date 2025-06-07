@@ -63,7 +63,7 @@ fastify.post<{
     });
 
     // Count tokens for the user message
-    const userTokens = countTokens(content);
+    const userTokens = countTokens(content, fastify.log);
     fastify.log.info(`Counted ${userTokens} tokens for user message: "${content}"`);
 
     // Insert user message into database
