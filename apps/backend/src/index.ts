@@ -62,9 +62,10 @@ fastify.post<{
       content: content
     });
 
+    console.log(`Received request for /chat. Content length: ${content.length}`);
     // Count tokens for the user message
-    const userTokens = countTokens(content, fastify.log);
-    fastify.log.info(`Counted ${userTokens} tokens for user message: "${content}"`);
+    const userTokens = countTokens(content);
+    console.log(`countTokens returned: ${userTokens}`);
 
     // Insert user message into database
     await insertMessage({
