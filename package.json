@@ -7,6 +7,7 @@
     "lint": "turbo run lint",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "check-types": "turbo run check-types",
+    "start": "cd apps/backend && npm start",
     "heroku-postbuild": "pnpm install --filter=@mini-clm/backend... && pnpm run build --filter=@mini-clm/backend"
   },
   "devDependencies": {
