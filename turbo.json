@@ -3,10 +3,15 @@
   "ui": "tui",
   "globalEnv": [
     "PORT",
+    "NODE_ENV",
+    "DATABASE_URL",
+    "OPENAI_API_KEY",
+    "FRONTEND_URL", 
     "GOOGLE_CLIENT_ID",
     "GOOGLE_CLIENT_SECRET", 
     "NEXTAUTH_SECRET",
-    "NEXTAUTH_URL"
+    "NEXTAUTH_URL",
+    "NEXT_PUBLIC_BACKEND_URL"
   ],
   "tasks": {
     "build": {
