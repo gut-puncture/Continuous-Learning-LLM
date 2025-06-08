@@ -57,7 +57,7 @@ export default function ChatListItem({
     try {
       await onRename(thread.thread_id, editName.trim())
       setIsEditing(false)
-    } catch (error) {
+    } catch {
       setRenameError('Failed to rename chat')
     } finally {
       setIsRenaming(false)

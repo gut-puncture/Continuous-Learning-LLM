@@ -2,7 +2,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import OpenAI from 'openai';
 import { v4 as uuidv4 } from 'uuid';
-import { insertMessage, getThreadMessages, getThreadsByUser, updateThreadName, type Message, type ThreadSummary } from './db/index.js';
+import { insertMessage, getThreadMessages, getThreadsByUser, updateThreadName, type Message } from './db/index.js';
 import { countTokens } from './utils/tokenizer.js';
 import { processPendingEmbeddings, retrieveMemories } from './lib/embeddings.js';
 

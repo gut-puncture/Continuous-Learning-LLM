@@ -2,11 +2,5 @@
   "version": 2,
   "installCommand": "cd ../.. && pnpm install",
   "buildCommand": "cd ../.. && pnpm turbo build --filter=@mini-clm/frontend",
-  "outputDirectory": ".next",
-  "crons": [
-    {
-      "path": "/api/cron/embeddings",
-      "schedule": "*/5 * * * *"
-    }
-  ]
+  "outputDirectory": ".next"
 } 

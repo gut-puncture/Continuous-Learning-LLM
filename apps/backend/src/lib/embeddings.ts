@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
 import { db } from '../db/index.js';
 import { messages } from '../db/schema.js';
-import { eq, and, isNull, isNotNull, ne, sql } from 'drizzle-orm';
+import { eq, and, isNotNull, sql } from 'drizzle-orm';
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -86,8 +86,9 @@ async function generateEmbeddingWithRetry(text: string, maxRetries = 3): Promise
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       return await generateEmbedding(text);
-    } catch (error: any) {
-      console.log(`Embedding attempt ${attempt} failed:`, error.message);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.log(`Embedding attempt ${attempt} failed:`, errorMessage);
       
       if (attempt === maxRetries) {
         throw error;
@@ -100,6 +101,14 @@ async function generateEmbeddingWithRetry(text: string, maxRetries = 3): Promise
   }
   
   throw new Error('Max retries reached');
+}
+
+// Define interface for memory query results
+interface MemoryRow {
+  msg_id: number;
+  content: string;
+  distance: string;
+  score: string;
 }
 
 /**
@@ -120,7 +129,7 @@ export async function retrieveMemories(
     const scoreThreshold = parseFloat(process.env.MEMORY_SCORE_THRESHOLD || '0.5');
     
     // SQL query for vector similarity search
-    const memories = await db.execute(sql`
+    const result = await db.execute(sql`
       SELECT 
         msg_id,
         content,
@@ -137,15 +146,24 @@ export async function retrieveMemories(
       LIMIT ${k}
     `);
 
+    // Convert result to array and process
+    const memories = Array.from(result);
+    
     // Filter by score threshold and return results
-    return (memories as any[])
-      .filter((row: any) => row.score <= scoreThreshold)
-      .map((row: any) => ({
-        msg_id: row.msg_id,
-        content: row.content,
-        distance: parseFloat(row.distance),
-        score: parseFloat(row.score)
-      }));
+    return memories
+      .filter((row: unknown) => {
+        const memoryRow = row as MemoryRow;
+        return parseFloat(memoryRow.score) <= scoreThreshold;
+      })
+      .map((row: unknown) => {
+        const memoryRow = row as MemoryRow;
+        return {
+          msg_id: memoryRow.msg_id,
+          content: memoryRow.content,
+          distance: parseFloat(memoryRow.distance),
+          score: parseFloat(memoryRow.score)
+        };
+      });
 
   } catch (error) {
     console.error('Error retrieving memories:', error);

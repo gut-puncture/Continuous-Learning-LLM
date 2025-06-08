@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useEffect } from 'react'
+import React, { useEffect, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useUser } from '@/hooks/useUser'
 import { useThreads } from '@/hooks/useThreads'
@@ -17,11 +17,11 @@ export default function ChatLayout() {
   const activeThreadId = searchParams.get('threadId') || ''
 
   // Handle new thread creation
-  const handleNewThread = () => {
+  const handleNewThread = useCallback(() => {
     const newId = crypto.randomUUID()
     newThread(newId)
     router.push(`/chat?threadId=${newId}`)
-  }
+  }, [newThread, router])
 
   // Handle thread selection
   const handleSelectThread = (threadId: string) => {
@@ -33,7 +33,7 @@ export default function ChatLayout() {
     if (isAuthenticated && !activeThreadId) {
       handleNewThread()
     }
-  }, [isAuthenticated, activeThreadId])
+  }, [isAuthenticated, activeThreadId, handleNewThread])
 
   // Show loading while checking authentication
   if (userLoading) {

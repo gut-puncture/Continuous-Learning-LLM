@@ -4,7 +4,7 @@ export * from './types.js';
 
 import { drizzle } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
-import { eq, desc, sql as drizzleSql } from 'drizzle-orm'
+import { eq, sql as drizzleSql } from 'drizzle-orm'
 import { messages, type NewMessage, type Message } from './schema.js'
 
 // Database connection

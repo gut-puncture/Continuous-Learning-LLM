@@ -1,6 +1,6 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 
-export async function POST(request: NextRequest) {
+export async function POST() {
   try {
     // Get backend URL from environment
     const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL;
@@ -37,13 +37,14 @@ export async function POST(request: NextRequest) {
       timestamp: new Date().toISOString()
     });
 
-  } catch (error: any) {
-    console.error('❌ Vercel embedding processing failed:', error);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    console.error('❌ Vercel embedding processing failed:', errorMessage);
     
     return NextResponse.json(
       { 
         success: false, 
-        error: error.message || 'Unknown error',
+        error: errorMessage,
         timestamp: new Date().toISOString()
       },
       { status: 500 }
