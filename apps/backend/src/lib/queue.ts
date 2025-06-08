@@ -4,7 +4,7 @@ import IORedis from 'ioredis';
 // Redis connection for both local and production
 const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
 const redisConnection = new IORedis(redisUrl, {
-  maxRetriesPerRequest: 3,
+  maxRetriesPerRequest: null, // Required by BullMQ for blocking operations
   lazyConnect: true,
 });
 
