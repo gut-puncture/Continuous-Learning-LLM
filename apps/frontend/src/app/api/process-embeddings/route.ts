@@ -19,6 +19,7 @@ export async function POST() {
       headers: {
         'Content-Type': 'application/json',
       },
+      body: JSON.stringify({}), // Send empty JSON object
       signal: AbortSignal.timeout(25000), // 25 second timeout for Vercel
     });
 
