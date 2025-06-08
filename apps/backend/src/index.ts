@@ -6,6 +6,7 @@ import { insertMessage, getThreadMessages, getThreadsByUser, updateThreadName, t
 import { countTokens } from './utils/tokenizer.js';
 import { processPendingEmbeddings, retrieveMemories } from './lib/embeddings.js';
 import { metricsQueue } from './lib/queue.js';
+import { jobAWorker } from './jobs/jobA.js';
 
 // Initialize Fastify
 const fastify = Fastify({
@@ -246,14 +247,49 @@ fastify.put<{
 // Start server
 const start = async () => {
   try {
+    // Initialize background worker
+    console.log('🔄 Starting Job A Worker for message metrics processing...');
+    
+    // Setup worker error handling
+    jobAWorker.on('error', (error) => {
+      console.error('❌ Worker error:', error);
+    });
+
+    jobAWorker.on('failed', (job, err) => {
+      console.error(`❌ Job ${job?.id} failed:`, err);
+    });
+
+    jobAWorker.on('completed', (job, result) => {
+      console.log(`✅ Job ${job.id} completed:`, result);
+    });
+
+    console.log('✅ Job A Worker initialized');
+
+    // Start web server
     const port = process.env.PORT ? parseInt(process.env.PORT) : 3001;
     await fastify.listen({ port, host: '0.0.0.0' });
     console.log(`🚀 Backend server running on port ${port}`);
+    console.log(`🔄 Background worker running in same process`);
   } catch (err) {
     fastify.log.error(err);
     process.exit(1);
   }
 };
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  console.log('💡 Received SIGTERM, shutting down gracefully...');
+  await jobAWorker.close();
+  await fastify.close();
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  console.log('💡 Received SIGINT, shutting down gracefully...');
+  await jobAWorker.close();
+  await fastify.close();
+  process.exit(0);
+});
 
 start();
 
