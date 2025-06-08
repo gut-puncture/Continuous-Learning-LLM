@@ -50,23 +50,11 @@ fastify.post('/api/process-embeddings', async (request, reply) => {
   }
 });
 
-// Helper function to trigger background processing
+// Function to trigger async embedding processing (removed self-calling)
 async function triggerEmbeddingProcessing() {
-  try {
-    // Make async HTTP call to our own processing endpoint
-    const backendUrl = process.env.BACKEND_URL || 'http://localhost:3001';
-    
-    // Fire-and-forget request
-    fetch(`${backendUrl}/api/process-embeddings`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' }
-    }).catch(error => {
-      console.log('Background embedding trigger failed (non-critical):', error.message);
-    });
-  } catch (error) {
-    // Non-critical error - don't block the main request
-    console.log('Failed to trigger embedding processing:', error);
-  }
+  // Note: This will be handled by Vercel frontend calling our process-embeddings endpoint
+  // or by Heroku cron jobs in Phase 3. For now, embeddings are processed by external trigger.
+  console.log('💡 Embedding processing will be triggered externally via /api/process-embeddings');
 }
 
 // Chat route

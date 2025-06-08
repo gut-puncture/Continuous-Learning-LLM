@@ -124,7 +124,6 @@ All jobs read the *delta* since their previous run.
 | **Sentiment**                     | Call `gpt-4o-mini-2024-07-18` with *system*: “Return an integer –5 to +5 for sentiment of the text”; store in `sentiment`. Extremely negative emotion, anger, fear, despair gets -5, Neutral statement of fact gets 0 and Highly positive emotion, joy, gratitude, praise gets +5.                          |
 | **Excitement** (emotional weight) | Same model, 0–1 scale (“boring” 0 → “exciting” 1).                                                                                               |
 | **Helpfulness**                   | Prompt: “For a future self who revisits this conversation, how helpful is the information (0–1)?”                                                |
-| **Topic label**                   | OpenAI *text classification* endpoint (`/classifications`) with a static topic list you define now (e.g., Tech, Health, Planning, Social, etc.). |
 | **Novelty**                       | `1 – MAX(cosine)` against previous 500 messages from the same use (pgvector).                                                                                      |
 | **Triple extraction**             | Prompt `gpt-4o-mini-2024-07-18`: “SYSTEM: Extract up to 3 factual (subject, relation, object) triples from the text.
 Return JSON list [{"s":"", "p":"", "o":""}]. Use canonical names if possible.”.                                                  |
@@ -278,7 +277,6 @@ Store as `SYSTEM_PROMPT` env-var; prepend to every completion call (see §1.4).
 
 | Decision                            | Default in spec                                    | Change if you wish            |
 | ----------------------------------- | -------------------------------------------------- | ----------------------------- |
-| Topic label set                     | Finance, Coding, Planning, Personal, Entertainment | AI should Add/remove labels that are appropriate            |
 | Similarity threshold for clustering | `emb <-> emb < 0.15`                               | AI must change if needed to change graph density  |
 | Louvain resolution                  | `1.0`                                              | AI can Increase >1 for more clusters |
 
