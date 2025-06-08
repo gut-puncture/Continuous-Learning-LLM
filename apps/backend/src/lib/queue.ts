@@ -6,6 +6,10 @@ const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
 const redisConnection = new IORedis(redisUrl, {
   maxRetriesPerRequest: null, // Required by BullMQ for blocking operations
   lazyConnect: true,
+  // SSL configuration for Heroku Redis
+  tls: process.env.NODE_ENV === 'production' ? {
+    rejectUnauthorized: false
+  } : undefined,
 });
 
 // Job A: Message Metrics & KG Processing Queue
