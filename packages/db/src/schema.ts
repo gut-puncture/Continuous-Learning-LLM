@@ -1,7 +1,7 @@
 // Database schema definitions will go here
 // TODO: Implement tables for Phase 3
 
-import { pgTable, bigserial, uuid, text, timestamp, integer, check } from 'drizzle-orm/pg-core'
+import { pgTable, bigserial, uuid, text, timestamp, integer, check, vector, boolean, real } from 'drizzle-orm/pg-core'
 import { sql } from 'drizzle-orm'
 
 export const messages = pgTable('messages', {
@@ -12,9 +12,12 @@ export const messages = pgTable('messages', {
   created_at: timestamp('created_at', { withTimezone: true }).defaultNow(),
   content: text('content'),
   token_cnt: integer('token_cnt'),
-  thread_name: text('thread_name')
+  thread_name: text('thread_name'),
+  emb: vector('emb', { dimensions: 3072 }),
+  embed_ready: boolean('embed_ready').default(false),
+  priority: real('priority')
 }, (table) => ({
-  roleCheck: check('role_check', sql`${table.role} in ('user', 'assistant')`)
+  roleCheck: check('role_check', sql`${table.role} in ('user', 'assistant', 'system', 'introspection')`)
 }))
 
 export type Message = typeof messages.$inferSelect

@@ -4,6 +4,7 @@ import OpenAI from 'openai';
 import { v4 as uuidv4 } from 'uuid';
 import { insertMessage, getThreadMessages, getThreadsByUser, updateThreadName, type Message, type ThreadSummary } from './db/index.js';
 import { countTokens } from './utils/tokenizer.js';
+import { processPendingEmbeddings, retrieveMemories } from './lib/embeddings.js';
 
 // Initialize Fastify
 const fastify = Fastify({
@@ -28,6 +29,46 @@ fastify.get('/healthz', async () => {
   return { ok: true, timestamp: new Date().toISOString() };
 });
 
+// Background processing endpoint for embeddings
+fastify.post('/api/process-embeddings', async (request, reply) => {
+  try {
+    const result = await processPendingEmbeddings();
+    
+    return {
+      success: true,
+      processed: result.processed,
+      errors: result.errors,
+      timestamp: new Date().toISOString()
+    };
+  } catch (error) {
+    fastify.log.error('Embedding processing failed:', error);
+    return reply.code(500).send({ 
+      success: false, 
+      error: 'Failed to process embeddings',
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// Helper function to trigger background processing
+async function triggerEmbeddingProcessing() {
+  try {
+    // Make async HTTP call to our own processing endpoint
+    const backendUrl = process.env.BACKEND_URL || 'http://localhost:3001';
+    
+    // Fire-and-forget request
+    fetch(`${backendUrl}/api/process-embeddings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    }).catch(error => {
+      console.log('Background embedding trigger failed (non-critical):', error.message);
+    });
+  } catch (error) {
+    // Non-critical error - don't block the main request
+    console.log('Failed to trigger embedding processing:', error);
+  }
+}
+
 // Chat route
 fastify.post<{
   Body: {
@@ -50,11 +91,54 @@ fastify.post<{
     // Get conversation history
     const historyMessages = await getThreadMessages(threadId);
     
-    // Build messages array for OpenAI (convert to OpenAI format)
-    const openaiMessages = historyMessages.map((msg: Message) => ({
+    // Count tokens for the user message
+    const userTokens = countTokens(content);
+
+    // Insert user message into database with embed_ready=false
+    await insertMessage({
+      user_id: userId,
+      thread_id: threadId,
+      role: 'user',
+      content: content,
+      token_cnt: userTokens,
+      embed_ready: false,
+      priority: null
+    });
+
+    // Trigger background embedding processing (async, non-blocking)
+    triggerEmbeddingProcessing();
+
+    // Retrieve relevant memories for this query
+    const memories = await retrieveMemories(userId, content, threadId);
+    
+    // Build messages array for OpenAI
+    const openaiMessages: Array<{role: 'system' | 'user' | 'assistant', content: string}> = [];
+    
+    // Add system prompt only if this is the first turn in the thread
+    if (historyMessages.length === 0) {
+      const systemPrompt = process.env.SYSTEM_PROMPT || 'You are MemoryGPT, an assistant with long-term memory.\n<rules>\n1. You may cite memories by id with the syntax [mem123].\n2. If the answer is not in memory and you are unsure, say so honestly.\n</rules>';
+      openaiMessages.push({
+        role: 'system',
+        content: systemPrompt
+      });
+    }
+    
+    // Add retrieved memories as system messages
+    if (memories.length > 0) {
+      console.log(`📚 Retrieved ${memories.length} relevant memories`);
+      for (const memory of memories) {
+        openaiMessages.push({
+          role: 'system',
+          content: `<memory id="${memory.msg_id}">${memory.content}</memory>`
+        });
+      }
+    }
+    
+    // Add conversation history
+    openaiMessages.push(...historyMessages.map((msg: Message) => ({
       role: msg.role as 'user' | 'assistant',
       content: msg.content || ''
-    }));
+    })));
     
     // Add the new user message
     openaiMessages.push({
@@ -62,19 +146,7 @@ fastify.post<{
       content: content
     });
 
-    console.log(`Received request for /chat. Content length: ${content.length}`);
-    // Count tokens for the user message
-    const userTokens = countTokens(content);
-    console.log(`countTokens returned: ${userTokens}`);
-
-    // Insert user message into database
-    await insertMessage({
-      user_id: userId,
-      thread_id: threadId,
-      role: 'user',
-      content: content,
-      token_cnt: userTokens
-    });
+    console.log(`🤖 Sending to OpenAI: ${openaiMessages.length} messages (${memories.length} memories)`);
 
     // Call OpenAI
     const response = await openai.chat.completions.create({
@@ -93,7 +165,9 @@ fastify.post<{
       thread_id: threadId,
       role: 'assistant',
       content: assistantContent,
-      token_cnt: totalTokens
+      token_cnt: totalTokens,
+      embed_ready: false,
+      priority: null
     });
 
     // Return response

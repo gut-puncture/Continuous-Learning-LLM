@@ -57,6 +57,22 @@ export default function Chat({ threadId, onMessageSent }: ChatProps) {
     }
   }, [threadId])
 
+  // Helper function to trigger embedding processing
+  const triggerEmbeddingProcessing = useCallback(async () => {
+    try {
+      // Fire-and-forget call to Vercel serverless function
+      fetch('/api/process-embeddings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      }).catch(error => {
+        console.log('Background embedding processing trigger failed (non-critical):', error);
+      });
+    } catch (error) {
+      // Non-critical error - don't affect chat UX
+      console.log('Failed to trigger embedding processing:', error);
+    }
+  }, []);
+
   // Load existing messages when threadId and user are available
   useEffect(() => {
     if (threadId && user && isAuthenticated) {
@@ -119,6 +135,9 @@ export default function Chat({ threadId, onMessageSent }: ChatProps) {
       }
 
       setMessages(prev => [...prev, assistantMessage])
+
+      // Trigger embedding processing for the new messages
+      triggerEmbeddingProcessing()
 
       // Notify parent that a message was sent (for sidebar refresh)
       onMessageSent?.()
