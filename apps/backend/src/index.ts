@@ -5,6 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { insertMessage, getThreadMessages, getThreadsByUser, updateThreadName, type Message } from './db/index.js';
 import { countTokens } from './utils/tokenizer.js';
 import { processPendingEmbeddings, retrieveMemories } from './lib/embeddings.js';
+import { metricsQueue } from './lib/queue.js';
 
 // Initialize Fastify
 const fastify = Fastify({
@@ -29,7 +30,7 @@ fastify.get('/healthz', async () => {
   return { ok: true, timestamp: new Date().toISOString() };
 });
 
-// Background processing endpoint for embeddings
+// Background processing endpoint for embeddings (legacy support)
 fastify.post('/api/process-embeddings', async (request, reply) => {
   try {
     const result = await processPendingEmbeddings();
@@ -49,13 +50,6 @@ fastify.post('/api/process-embeddings', async (request, reply) => {
     });
   }
 });
-
-// Function to trigger async embedding processing (removed self-calling)
-async function triggerEmbeddingProcessing() {
-  // Note: This will be handled by Vercel frontend calling our process-embeddings endpoint
-  // or by Heroku cron jobs in Phase 3. For now, embeddings are processed by external trigger.
-  console.log('💡 Embedding processing will be triggered externally via /api/process-embeddings');
-}
 
 // Chat route
 fastify.post<{
@@ -82,19 +76,27 @@ fastify.post<{
     // Count tokens for the user message
     const userTokens = countTokens(content);
 
-    // Insert user message into database with embed_ready=false
-    await insertMessage({
+    // Insert user message into database with metrics_ready=false
+    const userMessage = await insertMessage({
       user_id: userId,
       thread_id: threadId,
       role: 'user',
       content: content,
       token_cnt: userTokens,
       embed_ready: false,
+      metrics_ready: false,
       priority: null
     });
 
-    // Trigger background embedding processing (async, non-blocking)
-    triggerEmbeddingProcessing();
+    // Enqueue Job A processing for this message (async, non-blocking)
+    await metricsQueue.add('process-message-metrics', {
+      msg_id: userMessage.msg_id,
+      user_id: userId,
+      thread_id: threadId,
+      content: content
+    });
+
+    console.log(`🚀 Enqueued Job A processing for message ${userMessage.msg_id}`);
 
     // Retrieve relevant memories for this query
     const memories = await retrieveMemories(userId, content, threadId);
@@ -146,15 +148,26 @@ fastify.post<{
     const totalTokens = response.usage?.total_tokens || 0;
 
     // Insert assistant message into database
-    await insertMessage({
+    const assistantMessage = await insertMessage({
       user_id: userId,
       thread_id: threadId,
       role: 'assistant',
       content: assistantContent,
       token_cnt: totalTokens,
       embed_ready: false,
+      metrics_ready: false,
       priority: null
     });
+
+    // Enqueue Job A processing for assistant message too
+    await metricsQueue.add('process-message-metrics', {
+      msg_id: assistantMessage.msg_id,
+      user_id: userId,
+      thread_id: threadId,
+      content: assistantContent
+    });
+
+    console.log(`🚀 Enqueued Job A processing for assistant message ${assistantMessage.msg_id}`);
 
     // Return response
     return {

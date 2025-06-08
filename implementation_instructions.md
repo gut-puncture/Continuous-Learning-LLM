@@ -129,8 +129,8 @@ All jobs read the *delta* since their previous run.
 Return JSON list [{"s":"", "p":"", "o":""}]. Use canonical names if possible.”.                                                  |
 | **KG merge**                      | For each triple: `INSERT ... ON CONFLICT (label) DO NOTHING` into `kg_nodes`; same for `kg_edges` with `weight = weight + 1`.                    |
 | **Centrality (edge-level)**       | Keep a rolling degree centrality per `kg_node` in a side table; update counts incrementally (no full graph yet).                                 |
-| **Priority compute**              | `priority = 0.7*novelty + 0.3*excitement + 0.2*helpfulness + 0.2*centrality_normalised` (weights editable ENV).                                  |
-| **Near-duplicate pass**           | For any two messages within batch whose cosine > 0.97 *and* same user → set `duplicate_of`, copy metrics from the survivor.  Deduplication will only run on messages from the same user, meaning different deduplication exercises for each user.                    |
+| **Priority compute**              | `priority = 0.7*novelty + 0.3*excitement + 0.2*helpfulness + 0.2*centrality_normalised + 0.1*ABS(Sentiment)` (weights editable ENV).                                  |
+| **Near-duplicate pass**           | This wil happen every 10 Minutes if there are any new messages. For any two messages within batch whose cosine > 0.97 *and* same user → set `duplicate_of`, copy metrics from the survivor.  Deduplication will only run on messages from the same user, meaning different deduplication exercises for each user.                    |
 
 ### 2.1  Job A Knowledge-graph construction (still Job A)
 Triple extraction:
@@ -164,6 +164,12 @@ Degree centrality for a message is the arithmetic mean of the degree values on a
 Provisional priority formula:
 0.30 × novelty + 0.20 × excitement + 0.20 × helpfulness + 0.20 × degree_centrality + 0.10 × ABS(sentiment)
 Write this to messages.priority.
+
+### 2.1.1 Job A-2
+Every 10 minutes we should run de-duplication on all the user's messages. A message should be compared with all non-duplicate user messages. If a message is deemed as duplicate (cosine similarity > 0.97), the later message will be marked duplicate and never used beyond that point.
+This job should only run if there have been any new messages from any user.
+For any message, this job should run first, before the hourly clustering or fine-tuning jobs.
+
 
 ### 2.2  Job B – “Hourly Graph & Clustering”
 

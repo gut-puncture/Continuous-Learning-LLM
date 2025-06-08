@@ -5,14 +5,23 @@ export * from './types.js';
 import { drizzle } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 import { eq, sql as drizzleSql } from 'drizzle-orm'
-import { messages, type NewMessage, type Message } from './schema.js'
+import { messages, kgNodes, kgEdges, msgToNode, clusters, clusterMembers, type NewMessage, type Message } from './schema.js'
 
 // Database connection
 const connectionString = process.env.DATABASE_URL!
 const sql = postgres(connectionString, {
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 })
-export const db = drizzle(sql, { schema: { messages } })
+export const db = drizzle(sql, { 
+  schema: { 
+    messages, 
+    kgNodes, 
+    kgEdges, 
+    msgToNode, 
+    clusters, 
+    clusterMembers 
+  } 
+})
 
 // Helper functions
 export async function insertMessage(messageData: NewMessage): Promise<Message> {
