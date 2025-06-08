@@ -102,14 +102,12 @@ fastify.post<{
     // Build messages array for OpenAI
     const openaiMessages: Array<{role: 'system' | 'user' | 'assistant', content: string}> = [];
     
-    // Add system prompt only if this is the first turn in the thread
-    if (historyMessages.length === 0) {
-      const systemPrompt = process.env.SYSTEM_PROMPT || 'You are MemoryGPT, an assistant with long-term memory.\n<rules>\n1. You may cite memories by id with the syntax [mem123].\n2. If the answer is not in memory and you are unsure, say so honestly.\n</rules>';
-      openaiMessages.push({
-        role: 'system',
-        content: systemPrompt
-      });
-    }
+    // Always add system prompt at the top of every OpenAI call
+    const systemPrompt = process.env.SYSTEM_PROMPT || 'You are MemoryGPT, an assistant with long-term memory.\n<rules>\n1. You may cite memories by id with the syntax [mem123].\n2. If the answer is not in memory and you are unsure, say so honestly.\n</rules>';
+    openaiMessages.push({
+      role: 'system',
+      content: systemPrompt
+    });
     
     // Add retrieved memories as system messages
     if (memories.length > 0) {
