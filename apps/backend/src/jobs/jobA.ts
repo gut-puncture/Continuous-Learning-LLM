@@ -155,7 +155,7 @@ Output: []
 
 // Job A Worker: Process message metrics and KG
 export const jobAWorker = new Worker(
-  'jobA',
+  'message-metrics',
   async (job) => {
     const { msg_id, user_id, thread_id, content } = job.data;
     
