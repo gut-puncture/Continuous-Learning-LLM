@@ -443,6 +443,212 @@ We want to implement phase 2 and I recommend reading phase 2 and 3 details first
 
 # Bugs
 1. no way to edit chat names
-2. 
+2. novelty always being 1.
 3. 
 
+
+
+
+
+## **Background & Context**
+
+- **Mini-CLM** is a chat application with long-term memory, knowledge graph, and advanced message metrics.
+- **Phase 2**: Embeddings, retrieval, and OpenAI integration are complete and deployed.
+- **Phase 3 (Job A)**: Job A worker processes each message for embeddings, metrics (sentiment, excitement, helpfulness, novelty, centrality), and knowledge graph (KG) triple extraction and canonicalization.
+- **Current Stack**: Next.js (Vercel), Fastify (Heroku), PostgreSQL (pgvector), Redis (BullMQ), OpenAI (embeddings + 4o-mini for metrics).
+
+---
+
+## **Job A-2: Deduplication, Clustering, and Centrality**
+- **Resources**: this will work in a new worker dyno which must be a hobby dyno with max $7/mo cost
+### **Purpose**
+- **Deduplicate** similar/identical messages to avoid redundant KG nodes and metrics.
+- **Cluster** semantically similar messages for better knowledge organization.
+- **Calculate centrality** for each message/node in the knowledge graph.
+
+### **Implementation Details**
+
+#### 1. **Deduplication**
+- **Trigger**: After Job A finishes processing a message.
+- **Logic**:
+  - For each new message, compare its embedding to the last N (e.g., 500) messages from the same user.
+  - If cosine similarity > threshold (e.g., 0.97), mark as duplicate.
+  - Update `duplicate_of` column in `messages` table with the msg_id of the canonical/original message.
+  - Set `dedup_ready = true` when deduplication is complete.
+- **Database**:
+  - `messages` table: `duplicate_of`, `dedup_ready` columns.
+- **Edge Cases**:
+  - If a message is a duplicate, skip further KG/metrics processing for it.
+  - If not, proceed to clustering.
+
+#### 2. **Clustering**
+- **Trigger**: After deduplication. Only use messages which are not duplicates.
+- **Logic**:
+  - Build a message similarity graph which will be stored in our database by taking each message as a node. A separate graph for each user needs to be created.
+  - Use embeddings to select the 20 top messages from the same user which have the highest cosine similarity with a new message. Connect the new message with each of these messages in the graph.
+  - Run Louvain community detection (python-louvain) to cluster messages on the entire graph which now should have the new messages as well. 
+  - For each mapping, upsert (cluster_id, msg_id) into cluster_members.
+- **Database**:
+  - `messages` table: `cluster_id` column.
+  - `cluster_members` table: (cluster_id, msg_id).
+- **Edge Cases**:
+  - Handle messages that don’t fit any cluster (singleton clusters) by giving them their own cluster ids.
+  - Allow for cluster merging/splitting as new data arrives.
+  - For users sending the first message the graph should get created with the first few messages and clustering should occur without errors.
+
+#### 3. **Centrality Calculation**
+- **Trigger**: After clustering.
+- **Logic**:
+  - For each KG node, calculate centrality (e.g., degree, betweenness, or eigenvector centrality).
+  - Centrality reflects how “important” or “connected” a node/message is in the knowledge graph.
+  - Update `centrality` column in `messages` and/or `kg_nodes` table.
+- **Database**:
+  - `messages` table: `centrality` column.
+  - `kg_nodes` table: `centrality` column (if needed).
+- **Edge Cases**:
+  - Recalculate centrality when KG structure changes (new nodes/edges, merges, etc.).
+
+#### 4. **Job Queue Integration**
+- **JobA-2** should be a separate BullMQ job, triggered after JobA completes.
+- Ensure idempotency: re-running the job should not corrupt data.
+- Add logging and error handling for all steps.
+
+---
+
+## **Job 2: Summarization and Cluster Labeling**
+
+### **Purpose**
+- Generate human-readable summaries for each cluster of messages.
+- Label clusters for easier navigation and search.
+
+### **Implementation Details**
+
+#### 1. **Cluster Summarization**
+- **Trigger**: After clustering is complete (JobA-2).
+- **Logic**:
+  - For each cluster, gather all messages (or a sample).
+  - Use OpenAI (e.g., GPT-4o) to generate a concise summary of the cluster’s main idea(s).
+  - Store the summary in a new `summary` column in the `clusters` table.
+- **Database**:
+  - `clusters` table: `cluster_id`, `summary`, `label`, `created_at`, `updated_at`.
+- **Edge Cases**:
+  - For very large clusters, sample representative messages.
+  - For singleton clusters, summary = message content.
+
+#### 2. **Cluster Labeling**
+- **Trigger**: After summarization.
+- **Logic**:
+  - Use OpenAI to generate a short label/title for each cluster (e.g., “Travel Memories”, “Work Advice”).
+  - Store in `label` column in `clusters` table.
+- **Database**:
+  - `clusters` table: `label`.
+- **Edge Cases**:
+  - If label is too generic or empty, retry or fallback to summary.
+
+#### 3. **Job Queue Integration**
+- **Job 2** should be a BullMQ job, triggered after JobA-2 finishes for a cluster.
+- Ensure jobs are not duplicated for the same cluster.
+- Add logging and error handling.
+
+---
+
+## **Job 3: User-Facing Features & Search**
+
+### **Purpose**
+- Expose deduplication, clustering, and summarization results to the user.
+- Enable advanced search, navigation, and visualization of memories and knowledge.
+
+### **Implementation Details**
+
+#### 1. **Cluster Browsing UI**
+- **Frontend**:
+  - Add a “Clusters” or “Topics” tab/page.
+  - List all clusters for the user, showing label and summary.
+  - Clicking a cluster shows all member messages and their details (metrics, KG links, etc.).
+- **Backend**:
+  - New API endpoints:
+    - `GET /clusters/:userId` — list clusters for a user.
+    - `GET /clusters/:clusterId` — get details, summary, and messages for a cluster.
+    - `GET /messages/:msgId` — get full message details, including dedup info, metrics, KG links.
+- **Database**:
+  - Use `clusters`, `cluster_members`, `messages`, and KG tables.
+
+#### 2. **Deduplication & Canonicalization in UI**
+- **Frontend**:
+  - Indicate when a message is a duplicate (e.g., “This is a duplicate of message X”).
+  - Option to view the canonical/original message.
+- **Backend**:
+  - API returns `duplicate_of` and canonical message info.
+
+#### 3. **Advanced Search**
+- **Frontend**:
+  - Add search bar for messages, clusters, and KG nodes.
+  - Support search by content, label, summary, or metrics (e.g., “show me all excited messages about travel”).
+- **Backend**:
+  - API endpoint for search, leveraging pgvector for semantic search and filters for metrics/labels.
+
+#### 4. **Knowledge Graph Visualization**
+- **Frontend**:
+  - Visualize the user’s knowledge graph (nodes = concepts, edges = relationships).
+  - Allow clicking nodes to see related messages/clusters.
+- **Backend**:
+  - API endpoint to fetch KG nodes/edges for visualization.
+
+#### 5. **Metrics & Insights**
+- **Frontend**:
+  - Show aggregate metrics for clusters (average excitement, helpfulness, etc.).
+  - Highlight most “novel” or “central” memories.
+- **Backend**:
+  - API endpoints to fetch metrics per cluster/message.
+
+#### 6. **Background Job Monitoring**
+- **Admin/Dev Only**:
+  - UI or CLI to view job queue status, failed jobs, and logs for JobA, JobA-2, Job2, Job3.
+
+---
+
+## **General Requirements & Best Practices**
+
+- **Idempotency:** All jobs should be safe to re-run.
+- **Error Handling:** Log and alert on failures; retry jobs as needed.
+- **Performance:** Use batch processing for clustering and summarization to avoid timeouts.
+- **Security:** Ensure all endpoints are authenticated and user data is isolated.
+- **Scalability:** Design jobs to handle more users/messages in the future.
+- **Documentation:** Document all endpoints, job flows, and data models.
+
+---
+
+## **Summary Table**
+
+| Job      | Purpose                                   | Key Steps/Logic                                                                 | DB Tables/Columns Affected                | API/Frontend Impact                |
+|----------|-------------------------------------------|----------------------------------------------------------------------------------|-------------------------------------------|------------------------------------|
+| JobA-2   | Deduplication, Clustering, Centrality     | Embedding similarity, cluster assignment, centrality calculation                  | messages, cluster_members, kg_nodes       | None (background)                  |
+| Job 2    | Summarization & Cluster Labeling          | Summarize cluster, generate label using OpenAI                                   | clusters, cluster_members                 | Cluster summaries/labels in UI     |
+| Job 3    | User-Facing Features & Search             | Expose clusters, dedup info, search, KG viz, metrics in UI                       | All above                                 | New UI pages, search, KG viz       |
+
+---
+
+## **What to Check/Test After Deployment**
+
+- **JobA-2:**  
+  - Duplicates are detected and marked in DB.
+  - Clusters are formed and cluster_members populated.
+  - Centrality values are updated.
+- **Job 2:**  
+  - Each cluster has a summary and label.
+- **Job 3:**  
+  - UI shows clusters, summaries, dedup info, and KG visualization.
+  - Search works for content, labels, and metrics.
+- **All Jobs:**  
+  - No errors in logs, jobs complete successfully, and data is correct in DB.
+
+---
+
+## **Conclusion**
+
+This plan covers **every technical and product detail** for deploying and validating JobA-2, Job 2, and Job 3.  
+**Nothing is omitted:**  
+- All triggers, logic, edge cases, DB schema, API, and UI requirements are included.
+- You can hand this to a developer or use it as a checklist for your own implementation and deployment.
+
+If you need a more detailed breakdown of any specific job, data model, or API contract, just ask!

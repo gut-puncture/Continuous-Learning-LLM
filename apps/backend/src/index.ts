@@ -89,6 +89,9 @@ fastify.post<{
       priority: null
     });
 
+    // DEBUG: Log exact values before enqueueing
+    console.log(`🔍 DEBUG - Enqueueing user message ${userMessage.msg_id}: userId="${userId}", threadId="${threadId}"`);
+
     // Enqueue Job A processing for this message (async, non-blocking)
     await metricsQueue.add('process-message-metrics', {
       msg_id: userMessage.msg_id,
@@ -159,6 +162,9 @@ fastify.post<{
       metrics_ready: false,
       priority: null
     });
+
+    // DEBUG: Log exact values before enqueueing
+    console.log(`🔍 DEBUG - Enqueueing assistant message ${assistantMessage.msg_id}: userId="${userId}", threadId="${threadId}"`);
 
     // Enqueue Job A processing for assistant message too
     await metricsQueue.add('process-message-metrics', {

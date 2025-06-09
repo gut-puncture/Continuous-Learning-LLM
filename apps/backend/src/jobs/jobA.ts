@@ -154,253 +154,258 @@ Output: []
 `;
 
 // Job A Worker: Process message metrics and KG
-export const jobAWorker = new Worker('message-metrics', async (job) => {
-  const { msg_id, user_id, thread_id, content } = job.data as MessageJobData;
-  
-  console.log(`🔄 Processing message ${msg_id} for user ${user_id}`);
-  
-  try {
-    // Step 1: Generate embedding first (if not already done)
-    let messageEmb: number[] | null = null;
-    const existingMessage = await db.select().from(messages).where(eq(messages.msg_id, msg_id)).limit(1);
+export const jobAWorker = new Worker(
+  'jobA',
+  async (job) => {
+    const { msg_id, user_id, thread_id, content } = job.data;
     
-    if (!existingMessage[0]?.emb) {
-      console.log(`📊 Generating embedding for message ${msg_id}`);
-      const embResponse = await openai.embeddings.create({
-        model: 'text-embedding-3-large',
-        input: content,
-      });
-      messageEmb = embResponse.data[0].embedding;
+    // DEBUG: Log exact values received by worker
+    console.log(`🔍 WORKER DEBUG - Processing message ${msg_id}: userId="${user_id}", threadId="${thread_id}"`);
+    
+    console.log(`🔄 Processing message ${msg_id} for user ${user_id}`);
+    
+    try {
+      // Step 1: Generate embedding first (if not already done)
+      let messageEmb: number[] | null = null;
+      const existingMessage = await db.select().from(messages).where(eq(messages.msg_id, msg_id)).limit(1);
       
-      // Update message with embedding (store as array)
+      if (!existingMessage[0]?.emb) {
+        console.log(`📊 Generating embedding for message ${msg_id}`);
+        const embResponse = await openai.embeddings.create({
+          model: 'text-embedding-3-large',
+          input: content,
+        });
+        messageEmb = embResponse.data[0].embedding;
+        
+        // Update message with embedding (store as array)
+        await db.update(messages)
+          .set({ 
+            emb: messageEmb,
+            embed_ready: true 
+          })
+          .where(eq(messages.msg_id, msg_id));
+      } else {
+        // Parse vector if stored as string
+        messageEmb = Array.isArray(existingMessage[0].emb) 
+          ? existingMessage[0].emb 
+          : JSON.parse(existingMessage[0].emb as string);
+      }
+      
+      // Step 2: Get full conversation context for sentiment/helpfulness
+      const threadMessages = await db.select()
+        .from(messages)
+        .where(eq(messages.thread_id, thread_id))
+        .orderBy(messages.created_at);
+      
+      const conversationContext = threadMessages
+        .map((msg: Message) => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`)
+        .join('\n');
+      
+      // Step 3: Parallel OpenAI calls for metrics
+      const [sentimentResult, helpfulnessResult, excitementResult, triplesResult] = await Promise.all([
+        // Sentiment with full context
+        openai.chat.completions.create({
+          model: 'gpt-4o-mini-2024-07-18',
+          messages: [
+            { role: 'system', content: SENTIMENT_PROMPT },
+            { role: 'user', content: `Conversation:\n${conversationContext}\nTarget Message: "${content}"\nSentiment:` }
+          ],
+          temperature: 0.1,
+          max_tokens: 10
+        }),
+        
+        // Helpfulness with full context
+        openai.chat.completions.create({
+          model: 'gpt-4o-mini-2024-07-18',
+          messages: [
+            { role: 'system', content: HELPFULNESS_PROMPT },
+            { role: 'user', content: `Conversation:\n${conversationContext}\nTarget Message: "${content}"\nHelpfulness:` }
+          ],
+          temperature: 0.1,
+          max_tokens: 10
+        }),
+        
+        // Excitement (message only)
+        openai.chat.completions.create({
+          model: 'gpt-4o-mini-2024-07-18',
+          messages: [
+            { role: 'system', content: EXCITEMENT_PROMPT },
+            { role: 'user', content: `Message: "${content}"\nExcitement:` }
+          ],
+          temperature: 0.1,
+          max_tokens: 10
+        }),
+        
+        // Triple extraction (message only)
+        openai.chat.completions.create({
+          model: 'gpt-4o-mini-2024-07-18',
+          messages: [
+            { role: 'system', content: TRIPLE_EXTRACTION_PROMPT },
+            { role: 'user', content: `Message: "${content}"\nOutput:` }
+          ],
+          temperature: 0.1,
+          max_tokens: 200
+        })
+      ]);
+      
+      // Parse results
+      const sentiment = parseInt(sentimentResult.choices[0].message.content?.trim() || '0');
+      const helpfulness = parseFloat(helpfulnessResult.choices[0].message.content?.trim() || '0');
+      const excitement = parseFloat(excitementResult.choices[0].message.content?.trim() || '0');
+      
+      let triples: Array<{s: string, p: string, o: string}> = [];
+      try {
+        const triplesText = triplesResult.choices[0].message.content?.trim() || '[]';
+        triples = JSON.parse(triplesText);
+      } catch (error) {
+        console.warn(`Failed to parse triples for message ${msg_id}:`, error);
+        triples = [];
+      }
+      
+      // Step 4: Calculate novelty (requires embedding)
+      let novelty = 0;
+      if (messageEmb) {
+        try {
+          const result = await db.execute(sql`
+            SELECT 1 - MAX(emb <=> ${messageEmb}::vector) as max_similarity
+            FROM messages 
+            WHERE user_id = ${user_id} AND msg_id != ${msg_id} AND emb IS NOT NULL
+            ORDER BY emb <=> ${messageEmb}::vector
+            LIMIT 500
+          `);
+          
+          novelty = (result as any)[0]?.max_similarity || 1.0;
+        } catch (error) {
+          console.warn(`Failed to calculate novelty for message ${msg_id}:`, error);
+          novelty = 1.0; // Default to max novelty on error
+        }
+      }
+      
+      // Step 5: Knowledge Graph Processing
+      const processedNodes: number[] = [];
+      
+      for (const triple of triples) {
+        // Process subject and object
+        for (const entity of [triple.s, triple.o]) {
+          const canonicalLabel = entity.toLowerCase().trim();
+          
+          // Check if node exists for this user
+          let existingNode = await db.select()
+            .from(kgNodes)
+            .where(and(eq(kgNodes.user_id, user_id), eq(kgNodes.label, canonicalLabel)))
+            .limit(1);
+          
+          let nodeId: number;
+          
+          if (existingNode.length === 0) {
+            // Create new node with embedding
+            const labelEmbResponse = await openai.embeddings.create({
+              model: 'text-embedding-3-large',
+              input: canonicalLabel,
+            });
+            
+            const [newNode] = await db.insert(kgNodes)
+              .values({
+                user_id: user_id,
+                label: canonicalLabel,
+                emb: labelEmbResponse.data[0].embedding,
+                degree: 0
+              })
+              .returning({ node_id: kgNodes.node_id });
+            
+            nodeId = newNode.node_id;
+          } else {
+            nodeId = existingNode[0].node_id;
+          }
+          
+          processedNodes.push(nodeId);
+        }
+        
+        // Create edge if we have both subject and object
+        if (triples.length > 0) {
+          const subjectNode = await db.select()
+            .from(kgNodes)
+            .where(and(eq(kgNodes.user_id, user_id), eq(kgNodes.label, triple.s.toLowerCase().trim())))
+            .limit(1);
+          
+          const objectNode = await db.select()
+            .from(kgNodes)
+            .where(and(eq(kgNodes.user_id, user_id), eq(kgNodes.label, triple.o.toLowerCase().trim())))
+            .limit(1);
+          
+          if (subjectNode.length > 0 && objectNode.length > 0) {
+            // Insert or increment edge weight
+            await db.insert(kgEdges)
+              .values({
+                user_id,
+                subject_id: subjectNode[0].node_id,
+                relation: triple.p,
+                object_id: objectNode[0].node_id,
+                weight: 1
+              })
+              .onConflictDoUpdate({
+                target: [kgEdges.user_id, kgEdges.subject_id, kgEdges.relation, kgEdges.object_id],
+                set: { weight: sql`${kgEdges.weight} + 1` }
+              });
+            
+            // Update node degrees
+            await db.update(kgNodes)
+              .set({ degree: sql`${kgNodes.degree} + 1` })
+              .where(eq(kgNodes.node_id, subjectNode[0].node_id));
+            
+            await db.update(kgNodes)
+              .set({ degree: sql`${kgNodes.degree} + 1` })
+              .where(eq(kgNodes.node_id, objectNode[0].node_id));
+          }
+        }
+      }
+      
+      // Link message to nodes
+      for (const nodeId of [...new Set(processedNodes)]) {
+        await db.insert(msgToNode)
+          .values({ msg_id, node_id: nodeId })
+          .onConflictDoNothing();
+      }
+      
+      // Step 6: Calculate centrality (degree-based for now)
+      let centrality = 0;
+      if (processedNodes.length > 0) {
+        const nodesDegrees = await db.select()
+          .from(kgNodes)
+          .where(and(
+            eq(kgNodes.user_id, user_id),
+            sql`${kgNodes.node_id} = ANY(${processedNodes})`
+          ));
+        
+        const avgDegree = nodesDegrees.reduce((sum: number, node: any) => sum + (node.degree || 0), 0) / nodesDegrees.length;
+        centrality = Math.min(avgDegree / 10, 1.0); // Normalize to 0-1
+      }
+      
+      // Step 7: Calculate priority
+      const priority = 0.3 * novelty + 0.3 * excitement + 0.2 * helpfulness + 0.1 * centrality + 0.1 * Math.abs(sentiment);
+      
+      // Step 8: Update message with all metrics
       await db.update(messages)
-        .set({ 
-          emb: messageEmb,
-          embed_ready: true 
+        .set({
+          sentiment,
+          excitement,
+          helpfulness,
+          novelty,
+          centrality,
+          priority,
+          metrics_ready: true
         })
         .where(eq(messages.msg_id, msg_id));
-    } else {
-      // Parse vector if stored as string
-      messageEmb = Array.isArray(existingMessage[0].emb) 
-        ? existingMessage[0].emb 
-        : JSON.parse(existingMessage[0].emb as string);
-    }
-    
-    // Step 2: Get full conversation context for sentiment/helpfulness
-    const threadMessages = await db.select()
-      .from(messages)
-      .where(eq(messages.thread_id, thread_id))
-      .orderBy(messages.created_at);
-    
-    const conversationContext = threadMessages
-      .map((msg: Message) => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`)
-      .join('\n');
-    
-    // Step 3: Parallel OpenAI calls for metrics
-    const [sentimentResult, helpfulnessResult, excitementResult, triplesResult] = await Promise.all([
-      // Sentiment with full context
-      openai.chat.completions.create({
-        model: 'gpt-4o-mini-2024-07-18',
-        messages: [
-          { role: 'system', content: SENTIMENT_PROMPT },
-          { role: 'user', content: `Conversation:\n${conversationContext}\nTarget Message: "${content}"\nSentiment:` }
-        ],
-        temperature: 0.1,
-        max_tokens: 10
-      }),
       
-      // Helpfulness with full context
-      openai.chat.completions.create({
-        model: 'gpt-4o-mini-2024-07-18',
-        messages: [
-          { role: 'system', content: HELPFULNESS_PROMPT },
-          { role: 'user', content: `Conversation:\n${conversationContext}\nTarget Message: "${content}"\nHelpfulness:` }
-        ],
-        temperature: 0.1,
-        max_tokens: 10
-      }),
+      console.log(`✅ Completed processing message ${msg_id}: sentiment=${sentiment}, excitement=${excitement}, helpfulness=${helpfulness}, novelty=${novelty}, priority=${priority}`);
       
-      // Excitement (message only)
-      openai.chat.completions.create({
-        model: 'gpt-4o-mini-2024-07-18',
-        messages: [
-          { role: 'system', content: EXCITEMENT_PROMPT },
-          { role: 'user', content: `Message: "${content}"\nExcitement:` }
-        ],
-        temperature: 0.1,
-        max_tokens: 10
-      }),
+      return { success: true, msg_id, metrics: { sentiment, excitement, helpfulness, novelty, centrality, priority } };
       
-      // Triple extraction (message only)
-      openai.chat.completions.create({
-        model: 'gpt-4o-mini-2024-07-18',
-        messages: [
-          { role: 'system', content: TRIPLE_EXTRACTION_PROMPT },
-          { role: 'user', content: `Message: "${content}"\nOutput:` }
-        ],
-        temperature: 0.1,
-        max_tokens: 200
-      })
-    ]);
-    
-    // Parse results
-    const sentiment = parseInt(sentimentResult.choices[0].message.content?.trim() || '0');
-    const helpfulness = parseFloat(helpfulnessResult.choices[0].message.content?.trim() || '0');
-    const excitement = parseFloat(excitementResult.choices[0].message.content?.trim() || '0');
-    
-    let triples: Array<{s: string, p: string, o: string}> = [];
-    try {
-      const triplesText = triplesResult.choices[0].message.content?.trim() || '[]';
-      triples = JSON.parse(triplesText);
     } catch (error) {
-      console.warn(`Failed to parse triples for message ${msg_id}:`, error);
-      triples = [];
+      console.error(`❌ Failed to process message ${msg_id}:`, error);
+      throw error;
     }
-    
-    // Step 4: Calculate novelty (requires embedding)
-    let novelty = 0;
-    if (messageEmb) {
-      try {
-        const result = await db.execute(sql`
-          SELECT 1 - MAX(emb <=> ${messageEmb}::vector) as max_similarity
-          FROM messages 
-          WHERE user_id = ${user_id} AND msg_id != ${msg_id} AND emb IS NOT NULL
-          ORDER BY emb <=> ${messageEmb}::vector
-          LIMIT 500
-        `);
-        
-        novelty = (result as any)[0]?.max_similarity || 1.0;
-      } catch (error) {
-        console.warn(`Failed to calculate novelty for message ${msg_id}:`, error);
-        novelty = 1.0; // Default to max novelty on error
-      }
-    }
-    
-    // Step 5: Knowledge Graph Processing
-    const processedNodes: number[] = [];
-    
-    for (const triple of triples) {
-      // Process subject and object
-      for (const entity of [triple.s, triple.o]) {
-        const canonicalLabel = entity.toLowerCase().trim();
-        
-        // Check if node exists for this user
-        let existingNode = await db.select()
-          .from(kgNodes)
-          .where(and(eq(kgNodes.user_id, user_id), eq(kgNodes.label, canonicalLabel)))
-          .limit(1);
-        
-        let nodeId: number;
-        
-        if (existingNode.length === 0) {
-          // Create new node with embedding
-          const labelEmbResponse = await openai.embeddings.create({
-            model: 'text-embedding-3-large',
-            input: canonicalLabel,
-          });
-          
-          const [newNode] = await db.insert(kgNodes)
-            .values({
-              user_id: user_id,
-              label: canonicalLabel,
-              emb: labelEmbResponse.data[0].embedding,
-              degree: 0
-            })
-            .returning({ node_id: kgNodes.node_id });
-          
-          nodeId = newNode.node_id;
-        } else {
-          nodeId = existingNode[0].node_id;
-        }
-        
-        processedNodes.push(nodeId);
-      }
-      
-      // Create edge if we have both subject and object
-      if (triples.length > 0) {
-        const subjectNode = await db.select()
-          .from(kgNodes)
-          .where(and(eq(kgNodes.user_id, user_id), eq(kgNodes.label, triple.s.toLowerCase().trim())))
-          .limit(1);
-        
-        const objectNode = await db.select()
-          .from(kgNodes)
-          .where(and(eq(kgNodes.user_id, user_id), eq(kgNodes.label, triple.o.toLowerCase().trim())))
-          .limit(1);
-        
-        if (subjectNode.length > 0 && objectNode.length > 0) {
-          // Insert or increment edge weight
-          await db.insert(kgEdges)
-            .values({
-              user_id,
-              subject_id: subjectNode[0].node_id,
-              relation: triple.p,
-              object_id: objectNode[0].node_id,
-              weight: 1
-            })
-            .onConflictDoUpdate({
-              target: [kgEdges.user_id, kgEdges.subject_id, kgEdges.relation, kgEdges.object_id],
-              set: { weight: sql`${kgEdges.weight} + 1` }
-            });
-          
-          // Update node degrees
-          await db.update(kgNodes)
-            .set({ degree: sql`${kgNodes.degree} + 1` })
-            .where(eq(kgNodes.node_id, subjectNode[0].node_id));
-          
-          await db.update(kgNodes)
-            .set({ degree: sql`${kgNodes.degree} + 1` })
-            .where(eq(kgNodes.node_id, objectNode[0].node_id));
-        }
-      }
-    }
-    
-    // Link message to nodes
-    for (const nodeId of [...new Set(processedNodes)]) {
-      await db.insert(msgToNode)
-        .values({ msg_id, node_id: nodeId })
-        .onConflictDoNothing();
-    }
-    
-    // Step 6: Calculate centrality (degree-based for now)
-    let centrality = 0;
-    if (processedNodes.length > 0) {
-      const nodesDegrees = await db.select()
-        .from(kgNodes)
-        .where(and(
-          eq(kgNodes.user_id, user_id),
-          sql`${kgNodes.node_id} = ANY(${processedNodes})`
-        ));
-      
-      const avgDegree = nodesDegrees.reduce((sum: number, node: any) => sum + (node.degree || 0), 0) / nodesDegrees.length;
-      centrality = Math.min(avgDegree / 10, 1.0); // Normalize to 0-1
-    }
-    
-    // Step 7: Calculate priority
-    const priority = 0.3 * novelty + 0.3 * excitement + 0.2 * helpfulness + 0.1 * centrality + 0.1 * Math.abs(sentiment);
-    
-    // Step 8: Update message with all metrics
-    await db.update(messages)
-      .set({
-        sentiment,
-        excitement,
-        helpfulness,
-        novelty,
-        centrality,
-        priority,
-        metrics_ready: true
-      })
-      .where(eq(messages.msg_id, msg_id));
-    
-    console.log(`✅ Completed processing message ${msg_id}: sentiment=${sentiment}, excitement=${excitement}, helpfulness=${helpfulness}, novelty=${novelty}, priority=${priority}`);
-    
-    return { success: true, msg_id, metrics: { sentiment, excitement, helpfulness, novelty, centrality, priority } };
-    
-  } catch (error) {
-    console.error(`❌ Failed to process message ${msg_id}:`, error);
-    throw error;
-  }
-}, {
-  connection: redisConnection,
-  concurrency: 2, // Process 2 messages in parallel
-});
+  }, {
+    connection: redisConnection,
+    concurrency: 2, // Process 2 messages in parallel
+  });
