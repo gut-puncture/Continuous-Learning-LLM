@@ -10,47 +10,94 @@ const openai = new OpenAI({
 });
 
 // Prompt templates from our validated tests
-const SENTIMENT_PROMPT = `You are a sentiment analyzer. Given a conversation and a target message, return only an integer from –5 (very negative) to +5 (very positive) representing the target message's sentiment.
+const SENTIMENT_PROMPT = `
+You are a sentiment analyzer. Given a messy, real-world conversation and a target message (the very last message), return exactly one integer between -5 (very negative) and +5 (very positive) reflecting only that target message's emotional tone. Output only the integer with no extra text.
+
+Scale:
+-5 → extremely negative emotions (anger, despair)
+-3 to -1 → negative but less intense (sadness, frustration)
+0 → neutral or factual statements
+1 to 3 → mildly positive or encouraging
+5 → extremely positive emotions (joy, excitement)
 
 Examples:
-Conversation:
-User: I'm so excited about this new project!
-Assistant: That's great!
-Target Message: "This is the best day ever!"
-Sentiment: 5
 
 Conversation:
-User: I got stuck in traffic.
-Assistant: That's frustrating.
-Target Message: "I feel completely drained."
-Sentiment: -4
+User: "I can't believe my flight got canceled yesterday, and now I'm stranded in a city I don't know."
+Assistant: "That's really rough—do you need accommodation recommendations?"
+User: "Yes, please."
+Assistant: "There's an airport hotel nearby but it's pricey."
+Target Message: "I'll try booking a hostel instead; thanks for the tip!"
+Sentiment: 1
 
 Conversation:
-User: What time is the meeting tomorrow?
-Assistant: It's at 10am.
-Target Message: "Thanks for letting me know."
-Sentiment: 0`;
+User: "My laptop battery died in the middle of my presentation, and now I'm panicking."
+Assistant: "You can borrow a charger from the reception desk. They usually have spares."
+User: "Great idea."
+Target Message: "Great idea."
+Sentiment: 2
 
-const HELPFULNESS_PROMPT = `You are a helpfulness evaluator. Given a conversation and a target message, rate how helpful the target message will be later (0.0–1.0). Return only a decimal.
+Conversation:
+User: "I'm so tired of these delays and bumps in the process."
+Assistant: "We apologize for the inconvenience, we're working on it."
+User: "Honestly, I'd rather just walk home than wait."
+Target Message: "Honestly, I'd rather just walk home than wait."
+Sentiment: -2
+
+Conversation:
+User: "Our project deadline is next week, and the report is nowhere near done."
+Assistant: "We can extend the deadline or add more resources."
+User: "Extending is risky, but resources might help."
+Target Message: "Let's bring in two more team members to finish it on time."
+Sentiment: 0
+`;
+
+const HELPFULNESS_PROMPT = `
+You are a helpfulness evaluator. Given a messy, real-world conversation thread (with both user and assistant messages) and a target message (the very next assistant response), return exactly one decimal between 0.0 (not helpful at all) and 1.0 (maximally helpful). Do not output any text other than the number.
+
+Guidelines:
+0.0 → completely unhelpful or off-topic
+0.1–0.3 → trivial acknowledgements or small talk
+0.4–0.6 → partial answers or clarifying questions that may require follow-up
+0.7–0.9 → mostly helpful but missing minor details or examples
+1.0 → clear, complete, and actionable solution to the user's request
 
 Examples:
+
 Conversation:
-User: How do I reset my password?
-Assistant: Go to Settings > Account > Reset Password.
-Target Message: "I've sent the reset link; follow it to reset."
+User: "Hey, I've been trying to log into my bank app but it just shows a blank screen."
+Assistant: "What device and OS are you using?"
+User: "It's an iPhone 12 running iOS 16, latest app version."
+Assistant: "Have you tried force-closing and reopening the app?"
+User: "Yes, multiple times, still blank."
+Assistant: "Okay."
+Target Message: "Try uninstalling the app, then reinstall from the App Store—that usually fixes corrupted installs."
 Helpfulness: 1.0
 
 Conversation:
-User: What's the weather today?
-Assistant: I'm not sure.
-Target Message: "Hello!"
+User: "Um, so I'm trying to get my coffee machine to pair with my phone, but the Bluetooth icon just blinks and nothing happens."
+Assistant: "Did you enable Bluetooth permissions for the coffee app?"
+User: "I think so, but not sure where to check."
+Assistant: "Go to Settings > Apps > CoffeeApp > Permissions."
+Target Message: "If that doesn't work, reset the machine by holding the power button for 10 seconds, then try pairing again."
+Helpfulness: 0.8
+
+Conversation:
+User: "Hello?"
+Assistant: "Hi there!"
+User: "What's the weather?"
+Assistant: "It's sunny."
+Target Message: "K."
 Helpfulness: 0.0
 
 Conversation:
-User: I need a summary of our last meeting.
-Assistant: Here's a summary...
-Target Message: "Let me know if any part is unclear."
-Helpfulness: 0.6`;
+User: "Can you summarize our last call about the marketing budget?"
+Assistant: "We covered social ads, email campaigns, and influencer partnerships."
+User: "I missed the part about email frequency."
+Assistant: "We discussed sending weekly emails."
+Target Message: "I'll draft an example schedule and share it by end of day."
+Helpfulness: 0.6
+`;
 
 const EXCITEMENT_PROMPT = `You are an excitement rater. Given a single message, return only a decimal 0.0–1.0 indicating how exciting it is.
 
@@ -64,23 +111,47 @@ Excitement: 0.9
 Message: "I made coffee."
 Excitement: 0.0`;
 
-const TRIPLE_EXTRACTION_PROMPT = `You are a fact extractor. Extract up to three factual triples from one message. Return JSON array [{"s":"", "p":"", "o":""}] or [] if none.
+const TRIPLE_EXTRACTION_PROMPT = `
+You are a fact extractor. From a single, possibly messy human message, extract up to three factual triples (subject, relation, object).
+• Use snake_case for relations (e.g., works_at, moved_to).
+• Return a JSON array [{"s":"", "p":"", "o":""}].
+• If there are more than three plausible triples, choose the three most salient.
+• If none, return an empty array [].
+• Do not output any extra text.
 
 Examples:
-Message: "Alice works at ACME Corp."
-Output: [{"s":"Alice","p":"works_at","o":"ACME Corp"}]
 
-Message: "Bob and Carol founded StartupX in 2023."
-Output: [{"s":"Bob","p":"founded","o":"StartupX"},{"s":"Carol","p":"founded","o":"StartupX"}]
+Message: "Hey team, I moved from Denver to Seattle back in 2020 for a consulting gig, and just last month I switched roles to lead product."
+Output: [
+  {"s":"I","p":"moved_from","o":"Denver"},
+  {"s":"I","p":"moved_to","o":"Seattle"},
+  {"s":"I","p":"role_change","o":"lead product"}
+]
 
-Message: "Project Beta deadline is 2025-12-01."
-Output: [{"s":"Project Beta","p":"deadline","o":"2025-12-01"}]
+Message: "Our Q1 revenue was $1.2M, Q2 jumped to $1.8M, and Q3 is projected at $2M."
+Output: [
+  {"s":"our company","p":"q1_revenue","o":"$1.2M"},
+  {"s":"our company","p":"q2_revenue","o":"$1.8M"},
+  {"s":"our company","p":"q3_projection","o":"$2M"}
+]
 
-Message: "I love traveling."
+Message: "Acme Corp released the UltraPhone in November 2023, building on the X-Phone prototype from 2021."
+Output: [
+  {"s":"Acme Corp","p":"released","o":"UltraPhone"},
+  {"s":"UltraPhone","p":"release_date","o":"November 2023"},
+  {"s":"X-Phone prototype","p":"prototype_year","o":"2021"}
+]
+
+Message: "Just read that Pfizer and BioNTech collaborated on the COVID-19 vaccine in 2020."
+Output: [
+  {"s":"Pfizer","p":"collaborated_on","o":"COVID-19 vaccine"},
+  {"s":"BioNTech","p":"collaborated_on","o":"COVID-19 vaccine"},
+  {"s":"COVID-19 vaccine","p":"year","o":"2020"}
+]
+
+Message: "I love hiking, but I'm worried about bears in Yellowstone, so I'll skip it this year."
 Output: []
-
-Message: "The stock price of XYZ is $150."
-Output: [{"s":"XYZ","p":"stock_price","o":"$150"}]`;
+`;
 
 // Job A Worker: Process message metrics and KG
 export const jobAWorker = new Worker('message-metrics', async (job) => {
