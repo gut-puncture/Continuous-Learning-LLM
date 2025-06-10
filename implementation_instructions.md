@@ -444,7 +444,7 @@ We want to implement phase 2 and I recommend reading phase 2 and 3 details first
 # Bugs
 1. no way to edit chat names
 2. novelty always being 1.
-3. 
+3. centrality not being calculated.
 
 
 
@@ -499,9 +499,10 @@ We want to implement phase 2 and I recommend reading phase 2 and 3 details first
 #### 3. **Centrality Calculation**
 - **Trigger**: After clustering.
 - **Logic**:
-  - For each KG node, calculate centrality (e.g., degree, betweenness, or eigenvector centrality).
+  - For each KG node which has been added since the last time the job ran, calculate eigenvector centrality.
   - Centrality reflects how “important” or “connected” a node/message is in the knowledge graph.
   - Update `centrality` column in `messages` and/or `kg_nodes` table.
+  - Recalculate priority of each message for which the new eigenvector centrality has been calculated.
 - **Database**:
   - `messages` table: `centrality` column.
   - `kg_nodes` table: `centrality` column (if needed).

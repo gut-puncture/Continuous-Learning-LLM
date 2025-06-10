@@ -121,6 +121,12 @@ You are a fact extractor. From a single, possibly messy human message, extract u
 
 Examples:
 
+Message: "Hey! I like ice-cream and I eat it almost every day. How bad is it for my health?"
+Output: [
+  {"s":"I","p":"likes_to_eat","o":"Ice-Cream"},
+]
+
+
 Message: "Hey team, I moved from Denver to Seattle back in 2020 for a consulting gig, and just last month I switched roles to lead product."
 Output: [
   {"s":"I","p":"moved_from","o":"Denver"},
