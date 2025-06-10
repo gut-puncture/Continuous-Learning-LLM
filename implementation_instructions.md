@@ -444,7 +444,7 @@ We want to implement phase 2 and I recommend reading phase 2 and 3 details first
 # Bugs
 1. no way to edit chat names
 2. novelty always being 1.
-3. centrality not being calculated.
+3. 
 
 
 

@@ -170,9 +170,16 @@ export const jobAWorker = new Worker(
     
     console.log(`🔄 Processing message ${msg_id} for user ${user_id}`);
     
+    let messageEmb: number[] | null = null;
+    let sentiment = 0;
+    let helpfulness = 0;
+    let excitement = 0;
+    let novelty = 0;
+    let centrality = 0;
+    let priority = 0;
+    
     try {
       // Step 1: Generate embedding first (if not already done)
-      let messageEmb: number[] | null = null;
       const existingMessage = await db.select().from(messages).where(eq(messages.msg_id, msg_id)).limit(1);
       
       if (!existingMessage[0]?.emb) {
@@ -255,9 +262,9 @@ export const jobAWorker = new Worker(
       ]);
       
       // Parse results
-      const sentiment = parseInt(sentimentResult.choices[0].message.content?.trim() || '0');
-      const helpfulness = parseFloat(helpfulnessResult.choices[0].message.content?.trim() || '0');
-      const excitement = parseFloat(excitementResult.choices[0].message.content?.trim() || '0');
+      sentiment = parseInt(sentimentResult.choices[0].message.content?.trim() || '0');
+      helpfulness = parseFloat(helpfulnessResult.choices[0].message.content?.trim() || '0');
+      excitement = parseFloat(excitementResult.choices[0].message.content?.trim() || '0');
       
       let triples: Array<{s: string, p: string, o: string}> = [];
       try {
@@ -269,7 +276,6 @@ export const jobAWorker = new Worker(
       }
       
       // Step 4: Calculate novelty (requires embedding)
-      let novelty = 0;
       if (messageEmb) {
         try {
           const result = await db.execute(sql`
@@ -287,121 +293,141 @@ export const jobAWorker = new Worker(
         }
       }
       
-      // Step 5: Knowledge Graph Processing
-      const processedNodes: number[] = [];
+      // Step 5: Calculate initial priority (without centrality for now)
+      priority = 0.3 * novelty + 0.3 * excitement + 0.2 * helpfulness + 0.1 * centrality + 0.1 * Math.abs(sentiment);
       
-      for (const triple of triples) {
-        // Process subject and object
-        for (const entity of [triple.s, triple.o]) {
-          const canonicalLabel = entity.toLowerCase().trim();
-          
-          // Check if node exists for this user
-          let existingNode = await db.select()
-            .from(kgNodes)
-            .where(and(eq(kgNodes.user_id, user_id), eq(kgNodes.label, canonicalLabel)))
-            .limit(1);
-          
-          let nodeId: number;
-          
-          if (existingNode.length === 0) {
-            // Create new node with embedding
-            const labelEmbResponse = await openai.embeddings.create({
-              model: 'text-embedding-3-large',
-              input: canonicalLabel,
-            });
-            
-            const [newNode] = await db.insert(kgNodes)
-              .values({
-                user_id: user_id,
-                label: canonicalLabel,
-                emb: labelEmbResponse.data[0].embedding,
-                degree: 0
-              })
-              .returning({ node_id: kgNodes.node_id });
-            
-            nodeId = newNode.node_id;
-          } else {
-            nodeId = existingNode[0].node_id;
-          }
-          
-          processedNodes.push(nodeId);
-        }
-        
-        // Create edge if we have both subject and object
-        if (triples.length > 0) {
-          const subjectNode = await db.select()
-            .from(kgNodes)
-            .where(and(eq(kgNodes.user_id, user_id), eq(kgNodes.label, triple.s.toLowerCase().trim())))
-            .limit(1);
-          
-          const objectNode = await db.select()
-            .from(kgNodes)
-            .where(and(eq(kgNodes.user_id, user_id), eq(kgNodes.label, triple.o.toLowerCase().trim())))
-            .limit(1);
-          
-          if (subjectNode.length > 0 && objectNode.length > 0) {
-            // Insert or increment edge weight
-            await db.insert(kgEdges)
-              .values({
-                user_id,
-                subject_id: subjectNode[0].node_id,
-                relation: triple.p,
-                object_id: objectNode[0].node_id,
-                weight: 1
-              })
-              .onConflictDoUpdate({
-                target: [kgEdges.user_id, kgEdges.subject_id, kgEdges.relation, kgEdges.object_id],
-                set: { weight: sql`${kgEdges.weight} + 1` }
-              });
-            
-            // Update node degrees
-            await db.update(kgNodes)
-              .set({ degree: sql`${kgNodes.degree} + 1` })
-              .where(eq(kgNodes.node_id, subjectNode[0].node_id));
-            
-            await db.update(kgNodes)
-              .set({ degree: sql`${kgNodes.degree} + 1` })
-              .where(eq(kgNodes.node_id, objectNode[0].node_id));
-          }
-        }
-      }
-      
-      // Link message to nodes
-      for (const nodeId of [...new Set(processedNodes)]) {
-        await db.insert(msgToNode)
-          .values({ msg_id, node_id: nodeId })
-          .onConflictDoNothing();
-      }
-      
-      // Step 6: Calculate centrality (degree-based for now)
-      let centrality = 0;
-      if (processedNodes.length > 0) {
-        const nodesDegrees = await db.select()
-          .from(kgNodes)
-          .where(and(
-            eq(kgNodes.user_id, user_id),
-            sql`${kgNodes.node_id} = ANY(${processedNodes})`
-          ));
-        
-        const avgDegree = nodesDegrees.reduce((sum: number, node: any) => sum + (node.degree || 0), 0) / nodesDegrees.length;
-        centrality = Math.min(avgDegree / 10, 1.0); // Normalize to 0-1
-      }
-      
-      // Step 7: Calculate priority
-      const priority = 0.3 * novelty + 0.3 * excitement + 0.2 * helpfulness + 0.1 * centrality + 0.1 * Math.abs(sentiment);
-      
-      // Step 8: Update message with all metrics
+      // Step 6: SAVE METRICS IMMEDIATELY - Decouple from KG processing
       await db.update(messages)
         .set({
           sentiment,
           excitement,
           helpfulness,
           novelty,
-          centrality,
+          centrality, // Will be 0 initially, updated after KG processing
           priority,
           metrics_ready: true
         })
         .where(eq(messages.msg_id, msg_id));
+      
+      console.log(`✅ Metrics saved for message ${msg_id}: sentiment=${sentiment}, excitement=${excitement}, helpfulness=${helpfulness}, novelty=${novelty}, priority=${priority}`);
+      
+      // Step 7: Knowledge Graph Processing (SEPARATE ERROR HANDLING)
+      try {
+        const processedNodes: number[] = [];
+        
+        for (const triple of triples) {
+          // Process subject and object
+          for (const entity of [triple.s, triple.o]) {
+            const canonicalLabel = entity.toLowerCase().trim();
+            
+            // Check if node exists for this user
+            let existingNode = await db.select()
+              .from(kgNodes)
+              .where(and(eq(kgNodes.user_id, user_id), eq(kgNodes.label, canonicalLabel)))
+              .limit(1);
+            
+            let nodeId: number;
+            
+            if (existingNode.length === 0) {
+              // Create new node with embedding
+              const labelEmbResponse = await openai.embeddings.create({
+                model: 'text-embedding-3-large',
+                input: canonicalLabel,
+              });
+              
+              const [newNode] = await db.insert(kgNodes)
+                .values({
+                  user_id: user_id,
+                  label: canonicalLabel,
+                  emb: labelEmbResponse.data[0].embedding,
+                  degree: 0
+                })
+                .returning({ node_id: kgNodes.node_id });
+              
+              nodeId = newNode.node_id;
+            } else {
+              nodeId = existingNode[0].node_id;
+            }
+            
+            processedNodes.push(nodeId);
+          }
+          
+          // Create edge if we have both subject and object
+          if (triples.length > 0) {
+            const subjectNode = await db.select()
+              .from(kgNodes)
+              .where(and(eq(kgNodes.user_id, user_id), eq(kgNodes.label, triple.s.toLowerCase().trim())))
+              .limit(1);
+            
+            const objectNode = await db.select()
+              .from(kgNodes)
+              .where(and(eq(kgNodes.user_id, user_id), eq(kgNodes.label, triple.o.toLowerCase().trim())))
+              .limit(1);
+            
+            if (subjectNode.length > 0 && objectNode.length > 0) {
+              // Insert or increment edge weight
+              await db.insert(kgEdges)
+                .values({
+                  user_id,
+                  subject_id: subjectNode[0].node_id,
+                  relation: triple.p,
+                  object_id: objectNode[0].node_id,
+                  weight: 1
+                })
+                .onConflictDoUpdate({
+                  target: [kgEdges.user_id, kgEdges.subject_id, kgEdges.relation, kgEdges.object_id],
+                  set: { weight: sql`${kgEdges.weight} + 1` }
+                });
+              
+              // Update node degrees
+              await db.update(kgNodes)
+                .set({ degree: sql`${kgNodes.degree} + 1` })
+                .where(eq(kgNodes.node_id, subjectNode[0].node_id));
+              
+              await db.update(kgNodes)
+                .set({ degree: sql`${kgNodes.degree} + 1` })
+                .where(eq(kgNodes.node_id, objectNode[0].node_id));
+            }
+          }
+        }
+        
+        // Link message to nodes
+        for (const nodeId of [...new Set(processedNodes)]) {
+          await db.insert(msgToNode)
+            .values({ msg_id, node_id: nodeId })
+            .onConflictDoNothing();
+        }
+        
+        // Step 8: Update centrality and recalculate priority (degree-based for now)
+        if (processedNodes.length > 0) {
+          const nodesDegrees = await db.select()
+            .from(kgNodes)
+            .where(and(
+              eq(kgNodes.user_id, user_id),
+              sql`${kgNodes.node_id} = ANY(${processedNodes})`
+            ));
+          
+          const avgDegree = nodesDegrees.reduce((sum: number, node: any) => sum + (node.degree || 0), 0) / nodesDegrees.length;
+          centrality = Math.min(avgDegree / 10, 1.0); // Normalize to 0-1
+          
+          // Recalculate priority with centrality
+          priority = 0.3 * novelty + 0.3 * excitement + 0.2 * helpfulness + 0.1 * centrality + 0.1 * Math.abs(sentiment);
+          
+          // Update with new centrality and priority
+          await db.update(messages)
+            .set({
+              centrality,
+              priority
+            })
+            .where(eq(messages.msg_id, msg_id));
+        }
+        
+        console.log(`✅ KG processing completed for message ${msg_id}, processed ${processedNodes.length} nodes`);
+        
+      } catch (kgError) {
+        console.error(`⚠️  KG processing failed for message ${msg_id}, but metrics were already saved:`, kgError);
+        // Don't throw - metrics are already saved, KG failure shouldn't fail the entire job
+      }
       
       console.log(`✅ Completed processing message ${msg_id}: sentiment=${sentiment}, excitement=${excitement}, helpfulness=${helpfulness}, novelty=${novelty}, priority=${priority}`);
       
