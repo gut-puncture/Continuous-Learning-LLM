@@ -413,5 +413,5 @@ export const jobAWorker = new Worker(
     }
   }, {
     connection: redisConnection,
-    concurrency: 1, // Process 1 message at a time to avoid variable corruption
+    concurrency: 2, // Process 2 messages at a time
   });
