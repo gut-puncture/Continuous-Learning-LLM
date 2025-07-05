@@ -1,4 +1,4 @@
-# Mini-CLM (Continuous Learning Messaging)
+# Mini-CLM (Continuous Learning LLM)
 
 A work in progress Continuous Learning LLM System.
 

@@ -31,10 +31,11 @@ export const messages = pgTable('messages', {
 }))
 
 // Knowledge Graph Nodes (entities)
+// Labels are canonicalized: lowercase + trimmed + similarity check (cosine < 0.15)
 export const kgNodes = pgTable('kg_nodes', {
   node_id: bigserial('node_id', { mode: 'number' }).primaryKey(),
   user_id: uuid('user_id').notNull(),
-  label: text('label').notNull(), // canonicalized entity name
+  label: text('label').notNull(), // canonicalized entity name (lowercase, trimmed, similarity-merged)
   emb: vector('emb', { dimensions: 3072 }), // embedding of the label
   degree: integer('degree').default(0), // number of edges connected
   eig_cent: real('eig_cent').default(0), // eigenvector centrality

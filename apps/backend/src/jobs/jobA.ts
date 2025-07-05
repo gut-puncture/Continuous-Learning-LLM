@@ -4,10 +4,20 @@ import { eq, and, desc, ne, sql } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { messages, kgNodes, kgEdges, msgToNode, type Message } from '../db/schema.js';
 import { redisConnection, type MessageJobData } from '../lib/queue.js';
+import { 
+  canonicalizeLabels, 
+  MapEmbeddingCache, 
+  MapNodeCache,
+  type CanonicalResult 
+} from '../utils/canonicalize.js';
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
+
+// Constants from our plan
+const BULL_CONCURRENCY = 3;
+const MAX_LABELS_PER_MESSAGE = 6;
 
 // Prompt templates from our validated tests
 const SENTIMENT_PROMPT = `
@@ -53,111 +63,208 @@ Sentiment: 0
 `;
 
 const HELPFULNESS_PROMPT = `
-You are a helpfulness evaluator. Given a messy, real-world conversation thread (with both user and assistant messages) and a target message (the very next assistant response), return exactly one decimal between 0.0 (not helpful at all) and 1.0 (maximally helpful). Do not output any text other than the number.
+You are a helpfulness evaluator. Given a raw, potentially messy conversation (including both user and assistant messages) and a candidate assistant response, output a single decimal between 0.0 (not helpful) and 1.0 (extremely helpful). Respond with only the numeric score.
 
-Guidelines:
-0.0 → completely unhelpful or off-topic
-0.1–0.3 → trivial acknowledgements or small talk
-0.4–0.6 → partial answers or clarifying questions that may require follow-up
-0.7–0.9 → mostly helpful but missing minor details or examples
-1.0 → clear, complete, and actionable solution to the user's request
+Scale:
+- 0.0 → completely irrelevant, off-topic, or confusing.
+- 0.2 → minimal engagement (greetings, simple acknowledgements) without useful content.
+- 0.5 → partial assistance or clarifying questions that may require follow-up.
+- 0.8 → largely useful advice but missing minor details or examples.
+- 1.0 → fully addresses the user's need with clear, actionable, and specific guidance.
+
+Instructions:
+- Focus solely on how much the response helps solve the user's problem.
+- Ignore tone, grammar, or politeness; judge utility.
+- Output only one decimal place.
 
 Examples:
-
 Conversation:
-User: "Hey, I've been trying to log into my bank app but it just shows a blank screen."
-Assistant: "What device and OS are you using?"
-User: "It's an iPhone 12 running iOS 16, latest app version."
-Assistant: "Have you tried force-closing and reopening the app?"
-User: "Yes, multiple times, still blank."
-Assistant: "Okay."
-Target Message: "Try uninstalling the app, then reinstall from the App Store—that usually fixes corrupted installs."
+User: "I keep getting a 502 Bad Gateway when I call POST /login. What might be wrong?"
+Assistant: "Check your server logs for timeout errors and confirm your database is accepting connections."
+Target Response: "It looks like your DB connection pool is exhausted. Increase the pool size in your config."
 Helpfulness: 1.0
 
 Conversation:
-User: "Um, so I'm trying to get my coffee machine to pair with my phone, but the Bluetooth icon just blinks and nothing happens."
-Assistant: "Did you enable Bluetooth permissions for the coffee app?"
-User: "I think so, but not sure where to check."
-Assistant: "Go to Settings > Apps > CoffeeApp > Permissions."
-Target Message: "If that doesn't work, reset the machine by holding the power button for 10 seconds, then try pairing again."
-Helpfulness: 0.8
-
-Conversation:
-User: "Hello?"
-Assistant: "Hi there!"
-User: "What's the weather?"
-Assistant: "It's sunny."
-Target Message: "K."
+User: "Um, hi?"
+Assistant: "Hello!"
+Target Response: "Yes."
 Helpfulness: 0.0
 
 Conversation:
-User: "Can you summarize our last call about the marketing budget?"
-Assistant: "We covered social ads, email campaigns, and influencer partnerships."
-User: "I missed the part about email frequency."
-Assistant: "We discussed sending weekly emails."
-Target Message: "I'll draft an example schedule and share it by end of day."
-Helpfulness: 0.6
+User: "How do I center a div vertically and horizontally?"
+Assistant: "Use flexbox: \`display: flex; align-items: center; justify-content: center;\`."
+Target Response: "Thanks, that worked!"
+Helpfulness: 1.0
+
+Conversation:
+User: "The UI broke after I updated Tailwind, and no errors show up."
+Assistant: "Inspect the CSS build output and ensure your purge settings include all component paths."
+Target Response: "I checked and PurgeCSS was removing my classes—fixed now."
+Helpfulness: 0.8
+
+Conversation:
+User: "I'm so frustrated my code won't compile—everything is red!"
+Assistant: "Try running \`pnpm install\` to ensure dependencies are up to date."
+Target Response: "That fixed missing modules. Thanks."
+Helpfulness: 0.7
+
+Conversation:
+User: "What's the difference between var, let, and const in JavaScript?"
+Assistant: "var is function-scoped, let and const are block-scoped; const cannot be reassigned."
+Target Response: "Got it—const for values, let for variables, avoid var."
+Helpfulness: 1.0
+
+Conversation:
+User: "Our customer satisfaction dropped by 10% last month, and we didn't change anything."
+Assistant: "Review recent feature releases or support tickets for possible negative feedback."
+Target Response: "Good idea, I'll check the ticket history."
+Helpfulness: 0.8
+
+Conversation:
+User: "Just some random chitchat."
+Assistant: "Nice!"
+Target Response: "Cool."
+Helpfulness: 0.0
 `;
 
-const EXCITEMENT_PROMPT = `You are an excitement rater. Given a single message, return only a decimal 0.0–1.0 indicating how exciting it is.
+const EXCITEMENT_PROMPT = `
+You are an excitement scorer. Given a single user message, output a decimal between 0.0 (completely mundane) and 1.0 (extremely exciting). Respond with only the number.
+
+Scale Guidance:
+- 0.0 → factual, neutral, unremarkable statements.
+- 0.2 → slight interest or routine updates.
+- 0.5 → moderately engaging or pleasant news.
+- 0.8 → highly positive, energetic or emotionally charged content.
+- 1.0 → breakthrough achievements, major celebrations, or thrilling events.
+
+Instructions:
+- Base your rating on the user's tone and content.
+- Use one decimal place.
 
 Examples:
-Message: "The sky is blue today."
+Message: "I made coffee."
+Excitement: 0.0
+
+Message: "Just fixed a minor typo in my doc."
 Excitement: 0.1
 
-Message: "Our startup just closed a $100M round!"
+Message: "Our team's sales jumped by 25% this quarter after the marketing overhaul!"
 Excitement: 0.9
 
-Message: "I made coffee."
-Excitement: 0.0`;
+Message: "I can't believe I finally deployed the new feature—this was a nightmare to get right."
+Excitement: 0.8
+
+Message: "Ugh, I'm stuck debugging a weird null reference error that only appears in prod."
+Excitement: 0.0
+
+Message: "I completed my PhD thesis defense yesterday. They said I passed with honors!"
+Excitement: 1.0
+
+Message: "So, like, I visited Paris and did all the touristy stuff—Eiffel Tower was lit up so beautifully it gave me chills."
+Excitement: 0.7
+
+Message: "I just discovered a new algorithm that reduces compute time by 40%."
+Excitement: 0.85
+
+Message: "Last night, my code finally merged without conflicts—and no tests failed!"
+Excitement: 0.75
+
+Message: "The conference was okay, I talked about project updates."
+Excitement: 0.3
+`;
 
 const TRIPLE_EXTRACTION_PROMPT = `
-You are a fact extractor. From a single, possibly messy human message, extract up to three factual triples (subject, relation, object).
-• Use snake_case for relations (e.g., works_at, moved_to).
-• Return a JSON array [{"s":"", "p":"", "o":""}].
-• If there are more than three plausible triples, choose the three most salient.
-• If none, return an empty array [].
-• Do not output any extra text.
+Extract factual triples from a single user message to build a knowledge graph.
+
+Detailed Definitions:
+- subject (s): the main actor or entity performing or experiencing something; answers "who" or "what".
+- relation (p): the verb or relationship connecting subject and object; a concise action or attribute in snake_case; answers "what happened" or "what is".
+- object (o): the entity, property, or target acted upon or described; answers "what" or "whom".
+- preferences: if the message expresses liking or desire, include it as a factual relation in snake_case (e.g., loves_to, wants_to).
+
+Clear Rules:
+1. Focus on objective facts and clear preferences; ignore filler words.
+2. Choose up to the 3 most important facts in order of appearance.
+3. Output only a JSON array of objects [{"s":"...","p":"...","o":"..."}].
+4. Do not include any extra text, comments, or keys.
+5. If no factual triple exists, output an empty array: []
 
 Examples:
+Message: "User: I love hiking but I'm worried about bears in Yellowstone, so I'll skip it this year."
+Output: [{"s":"I","p":"loves_to","o":"hike"}]
 
-Message: "Hey! I like ice-cream and I eat it almost every day. How bad is it for my health?"
-Output: [
-  {"s":"I","p":"likes_to_eat","o":"Ice-Cream"},
-]
+Message: "User: I'm planning a trip to the Grand Canyon next month and booked a guided hiking tour. I'm nervous about the weather there."
+Output: [{"s":"I","p":"planning_trip","o":"Grand Canyon next month"},{"s":"I","p":"booked","o":"guided hiking tour"}]
 
+Message: "User: The Python script fails with a UnicodeDecodeError when processing CSV files. I think the encoding is wrong, maybe it's not UTF-8."
+Output: [{"s":"The Python script","p":"fails_with","o":"UnicodeDecodeError"},{"s":"I","p":"suspects","o":"encoding not UTF-8"}]
 
-Message: "Hey team, I moved from Denver to Seattle back in 2020 for a consulting gig, and just last month I switched roles to lead product."
-Output: [
-  {"s":"I","p":"moved_from","o":"Denver"},
-  {"s":"I","p":"moved_to","o":"Seattle"},
-  {"s":"I","p":"role_change","o":"lead product"}
-]
+Message: "User: Our sales increased by 20% in Q1 after the new marketing campaign, but Q2 numbers fell back to baseline."
+Output: [{"s":"Our sales","p":"increased","o":"20% in Q1"},{"s":"Q2 numbers","p":"fell_to","o":"baseline"}]
 
-Message: "Our Q1 revenue was $1.2M, Q2 jumped to $1.8M, and Q3 is projected at $2M."
-Output: [
-  {"s":"our company","p":"q1_revenue","o":"$1.2M"},
-  {"s":"our company","p":"q2_revenue","o":"$1.8M"},
-  {"s":"our company","p":"q3_projection","o":"$2M"}
-]
+Message: "User: I tried upgrading to Node 18 and my app crashed on startup. The logs show a deprecated API warning and then a segmentation fault. I need a workaround."
+Output: [{"s":"I","p":"upgraded_to","o":"Node 18"},{"s":"the app","p":"crashed_on","o":"startup"}]
 
-Message: "Acme Corp released the UltraPhone in November 2023, building on the X-Phone prototype from 2021."
-Output: [
-  {"s":"Acme Corp","p":"released","o":"UltraPhone"},
-  {"s":"UltraPhone","p":"release_date","o":"November 2023"},
-  {"s":"X-Phone prototype","p":"prototype_year","o":"2021"}
-]
+Message: "User: In December 2021, NASA launched the James Webb Space Telescope after many delays. The launch cost was approximately $10 billion."
+Output: [{"s":"NASA","p":"launched","o":"James Webb Space Telescope"},{"s":"launch","p":"date","o":"December 2021"},{"s":"launch","p":"cost","o":"$10 billion"}]
 
-Message: "Just read that Pfizer and BioNTech collaborated on the COVID-19 vaccine in 2020."
-Output: [
-  {"s":"Pfizer","p":"collaborated_on","o":"COVID-19 vaccine"},
-  {"s":"BioNTech","p":"collaborated_on","o":"COVID-19 vaccine"},
-  {"s":"COVID-19 vaccine","p":"year","o":"2020"}
-]
+Message: "User: Hey, I've been working on my new product called Mini-CLM. It's going to be a continuous learning LLM, and I wanted some help with the Louvain Clustering Algorithm."
+Output: [{"s":"I","p":"working_on","o":"continuous learning llm"}]
 
-Message: "I love hiking, but I'm worried about bears in Yellowstone, so I'll skip it this year."
-Output: []
+Message: "User: The data pipeline to generate the FRP is very complicated, it leads to a lot of errors every month. I want to simplify the pipeline or plug the issues by reducing tech debt. I will pitch this to my boss soon."
+Output: [{"s":"The data pipeline to generate the FRP","p":"degree_of_complexity","o":"very complicated"},{"s":"I","p":"wants_to","o":"simplify the data pipeline to generate the FRP"}]
+
+Message: "User: I just switched my laptop from Windows to Linux last night and it boots twice as fast now."
+Output: [{"s":"I","p":"switched_from","o":"Windows"},{"s":"I","p":"switched_to","o":"Linux"}]
+
+Message: "User: Last week, I deployed the new authentication service and then updated the database schema; everything is working now."
+Output: [{"s":"I","p":"deployed","o":"new authentication service"},{"s":"I","p":"updated","o":"database schema"}]
+
+Message: "User: We booked flights to Tokyo on June 5th, 2024, and reserved a hotel near Shibuya station."
+Output: [{"s":"We","p":"booked","o":"flights to Tokyo on June 5th, 2024"},{"s":"We","p":"reserved","o":"hotel near Shibuya station"}]
+
+Message: "User: My PhD thesis defense is on Friday at 10am in room 301. I've been preparing slides since last month."
+Output: [{"s":"my PhD thesis defense","p":"scheduled_for","o":"Friday at 10am in room 301"},{"s":"I","p":"preparing","o":"slides since last month"}]
+
+Message: "User: I spent $150 on groceries this morning, then picked up coffee with Sarah downtown."
+Output: [{"s":"I","p":"spent","o":"$150 on groceries this morning"},{"s":"I","p":"picked_up","o":"coffee with Sarah downtown"}]
 `;
+
+/**
+ * Helper function to check and restore cached embeddings from job retry data
+ */
+function restoreCachedEmbeddings(job: any): Map<string, number[]> {
+  const cache = new Map<string, number[]>();
+  
+  try {
+    const progress = job.progress();
+    if (progress && progress.cachedEmbeddings) {
+      for (const [label, embedding] of progress.cachedEmbeddings) {
+        cache.set(label, embedding);
+      }
+      console.log(`📦 Restored ${cache.size} cached embeddings from retry`);
+    }
+  } catch (error) {
+    console.warn('Failed to restore cached embeddings:', error);
+  }
+  
+  return cache;
+}
+
+/**
+ * Helper function to save embeddings to job progress for retry scenarios
+ */
+async function saveCachedEmbeddings(job: any, embedCache: MapEmbeddingCache): Promise<void> {
+  try {
+    const cacheEntries = Array.from((embedCache as any).cache.entries());
+    await job.updateProgress({ 
+      cachedEmbeddings: cacheEntries,
+      timestamp: Date.now()
+    });
+  } catch (error) {
+    console.warn('Failed to save cached embeddings:', error);
+  }
+}
 
 // Job A Worker: Process message metrics and KG
 export const jobAWorker = new Worker(
@@ -169,6 +276,16 @@ export const jobAWorker = new Worker(
     console.log(`🔍 WORKER DEBUG - Processing message ${msg_id}: userId="${user_id}", threadId="${thread_id}"`);
     
     console.log(`🔄 Processing message ${msg_id} for user ${user_id}`);
+    
+    // Initialize caches for this job
+    const embedCache = new MapEmbeddingCache();
+    const nodeCache = new MapNodeCache();
+    
+    // Restore any cached embeddings from previous retry attempts
+    const restoredEmbeddings = restoreCachedEmbeddings(job);
+    for (const [label, embedding] of restoredEmbeddings.entries()) {
+      embedCache.set(label, embedding);
+    }
     
     let messageEmb: number[] | null = null;
     let sentiment = 0;
@@ -311,100 +428,112 @@ export const jobAWorker = new Worker(
       
       console.log(`✅ Metrics saved for message ${msg_id}: sentiment=${sentiment}, excitement=${excitement}, helpfulness=${helpfulness}, novelty=${novelty}, priority=${priority}`);
       
-      // Step 7: Knowledge Graph Processing (SEPARATE ERROR HANDLING)
+      // Step 7: NEW CANONICAL KNOWLEDGE GRAPH PROCESSING
       try {
-        const processedNodes: number[] = [];
+        if (triples.length === 0) {
+          console.log(`📝 No triples extracted for message ${msg_id}, skipping KG processing`);
+          return { success: true, msg_id, metrics: { sentiment, excitement, helpfulness, novelty, centrality, priority } };
+        }
+        
+        // Collect all unique labels from triples (subject + object)
+        const allLabels = [...new Set(triples.flatMap(triple => [triple.s, triple.o]))];
+        console.log(`🏷️  Processing ${allLabels.length} unique labels from ${triples.length} triples for message ${msg_id}`);
+        
+        // Single batch embedding call for all unique labels
+        let labelEmbeddings: { [label: string]: number[] } = {};
+        const labelsNeedingEmbedding = allLabels.filter(label => !embedCache.get(label.toLowerCase().trim()));
+        
+        if (labelsNeedingEmbedding.length > 0) {
+          console.log(`🔤 Generating embeddings for ${labelsNeedingEmbedding.length} new labels`);
+          
+          const batchEmbResponse = await openai.embeddings.create({
+            model: 'text-embedding-3-large',
+            input: labelsNeedingEmbedding.map(label => label.toLowerCase().trim()),
+          });
+          
+          // Cache all new embeddings
+          batchEmbResponse.data.forEach((embData, index) => {
+            const normalizedLabel = labelsNeedingEmbedding[index].toLowerCase().trim();
+            embedCache.set(normalizedLabel, embData.embedding);
+            labelEmbeddings[normalizedLabel] = embData.embedding;
+          });
+          
+          // Save embeddings to job progress for retry resilience
+          await saveCachedEmbeddings(job, embedCache);
+          console.log(`💾 Cached ${Object.keys(labelEmbeddings).length} new embeddings`);
+        }
+        
+        // Canonicalize all labels using our new utility
+        const canonicalResults = await canonicalizeLabels(
+          allLabels,
+          user_id,
+          db,
+          openai,
+          embedCache,
+          nodeCache
+        );
+        
+        console.log(`🔗 Canonicalized ${canonicalResults.length} labels, ${canonicalResults.filter(r => r.wasCreated).length} new nodes created`);
+        
+        // Build label->nodeId mapping for edge creation
+        const labelToNodeId = new Map<string, number>();
+        canonicalResults.forEach(result => {
+          labelToNodeId.set(result.label, result.nodeId);
+        });
+        
+        // Create edges between canonicalized nodes
+        const processedNodes = new Set<number>();
         
         for (const triple of triples) {
-          // Process subject and object
-          for (const entity of [triple.s, triple.o]) {
-            const canonicalLabel = entity.toLowerCase().trim();
-            
-            // Check if node exists for this user
-            let existingNode = await db.select()
-              .from(kgNodes)
-              .where(and(eq(kgNodes.user_id, user_id), eq(kgNodes.label, canonicalLabel)))
-              .limit(1);
-            
-            let nodeId: number;
-            
-            if (existingNode.length === 0) {
-              // Create new node with embedding
-              const labelEmbResponse = await openai.embeddings.create({
-                model: 'text-embedding-3-large',
-                input: canonicalLabel,
-              });
-              
-              const [newNode] = await db.insert(kgNodes)
-                .values({
-                  user_id: user_id,
-                  label: canonicalLabel,
-                  emb: labelEmbResponse.data[0].embedding,
-                  degree: 0
-                })
-                .returning({ node_id: kgNodes.node_id });
-              
-              nodeId = newNode.node_id;
-            } else {
-              nodeId = existingNode[0].node_id;
-            }
-            
-            processedNodes.push(nodeId);
-          }
+          const subjectLabel = triple.s.toLowerCase().trim();
+          const objectLabel = triple.o.toLowerCase().trim();
           
-          // Create edge if we have both subject and object
-          if (triples.length > 0) {
-            const subjectNode = await db.select()
-              .from(kgNodes)
-              .where(and(eq(kgNodes.user_id, user_id), eq(kgNodes.label, triple.s.toLowerCase().trim())))
-              .limit(1);
+          const subjectNodeId = labelToNodeId.get(subjectLabel);
+          const objectNodeId = labelToNodeId.get(objectLabel);
+          
+          if (subjectNodeId && objectNodeId) {
+            // Insert or increment edge weight
+            await db.insert(kgEdges)
+              .values({
+                user_id,
+                subject_id: subjectNodeId,
+                relation: triple.p,
+                object_id: objectNodeId,
+                weight: 1
+              })
+              .onConflictDoUpdate({
+                target: [kgEdges.user_id, kgEdges.subject_id, kgEdges.relation, kgEdges.object_id],
+                set: { weight: sql`${kgEdges.weight} + 1` }
+              });
             
-            const objectNode = await db.select()
-              .from(kgNodes)
-              .where(and(eq(kgNodes.user_id, user_id), eq(kgNodes.label, triple.o.toLowerCase().trim())))
-              .limit(1);
+            // Update node degrees
+            await db.update(kgNodes)
+              .set({ degree: sql`${kgNodes.degree} + 1` })
+              .where(eq(kgNodes.node_id, subjectNodeId));
             
-            if (subjectNode.length > 0 && objectNode.length > 0) {
-              // Insert or increment edge weight
-              await db.insert(kgEdges)
-                .values({
-                  user_id,
-                  subject_id: subjectNode[0].node_id,
-                  relation: triple.p,
-                  object_id: objectNode[0].node_id,
-                  weight: 1
-                })
-                .onConflictDoUpdate({
-                  target: [kgEdges.user_id, kgEdges.subject_id, kgEdges.relation, kgEdges.object_id],
-                  set: { weight: sql`${kgEdges.weight} + 1` }
-                });
-              
-              // Update node degrees
-              await db.update(kgNodes)
-                .set({ degree: sql`${kgNodes.degree} + 1` })
-                .where(eq(kgNodes.node_id, subjectNode[0].node_id));
-              
-              await db.update(kgNodes)
-                .set({ degree: sql`${kgNodes.degree} + 1` })
-                .where(eq(kgNodes.node_id, objectNode[0].node_id));
-            }
+            await db.update(kgNodes)
+              .set({ degree: sql`${kgNodes.degree} + 1` })
+              .where(eq(kgNodes.node_id, objectNodeId));
+            
+            processedNodes.add(subjectNodeId);
+            processedNodes.add(objectNodeId);
           }
         }
         
-        // Link message to nodes
-        for (const nodeId of [...new Set(processedNodes)]) {
+        // Link message to all processed nodes
+        for (const nodeId of processedNodes) {
           await db.insert(msgToNode)
             .values({ msg_id, node_id: nodeId })
             .onConflictDoNothing();
         }
         
         // Step 8: Update centrality and recalculate priority (degree-based for now)
-        if (processedNodes.length > 0) {
+        if (processedNodes.size > 0) {
           const nodesDegrees = await db.select()
             .from(kgNodes)
             .where(and(
               eq(kgNodes.user_id, user_id),
-              sql`${kgNodes.node_id} = ANY(${processedNodes})`
+              sql`${kgNodes.node_id} = ANY(${Array.from(processedNodes)})`
             ));
           
           const avgDegree = nodesDegrees.reduce((sum: number, node: any) => sum + (node.degree || 0), 0) / nodesDegrees.length;
@@ -422,22 +551,31 @@ export const jobAWorker = new Worker(
             .where(eq(messages.msg_id, msg_id));
         }
         
-        console.log(`✅ KG processing completed for message ${msg_id}, processed ${processedNodes.length} nodes`);
+        console.log(`✅ KG processing completed for message ${msg_id}, processed ${processedNodes.size} nodes`);
         
       } catch (kgError) {
         console.error(`⚠️  KG processing failed for message ${msg_id}, but metrics were already saved:`, kgError);
+        
+        // Save embeddings before throwing so retry can reuse them
+        await saveCachedEmbeddings(job, embedCache);
+        
         // Don't throw - metrics are already saved, KG failure shouldn't fail the entire job
+        // But we should still log this for monitoring
       }
       
-      console.log(`✅ Completed processing message ${msg_id}: sentiment=${sentiment}, excitement=${excitement}, helpfulness=${helpfulness}, novelty=${novelty}, priority=${priority}`);
+      console.log(`✅ Completed processing message ${msg_id}: sentiment=${sentiment}, excitement=${excitement}, helpfulness=${helpfulness}, novelty=${novelty}, centrality=${centrality}, priority=${priority}`);
       
       return { success: true, msg_id, metrics: { sentiment, excitement, helpfulness, novelty, centrality, priority } };
       
     } catch (error) {
       console.error(`❌ Failed to process message ${msg_id}:`, error);
+      
+      // Save any embeddings we managed to generate before failing
+      await saveCachedEmbeddings(job, embedCache);
+      
       throw error;
     }
   }, {
     connection: redisConnection,
-    concurrency: 2, // Process 2 messages at a time
+    concurrency: BULL_CONCURRENCY, // Updated from 2 to 3 as per our plan
   });

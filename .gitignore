@@ -5,6 +5,10 @@
 .env.test.local
 .env.production.local
 
+# OpenCode (contains API keys)
+.opencode/
+.opencode.json
+
 # Python
 __pycache__
 

@@ -35,8 +35,6 @@
 
 ---
 
-CURRENTLY IMPLEMENTING THIS:
-
 
 ## 0  Shared assumptions
 
@@ -66,13 +64,13 @@ alter table messages
   add column if not exists embed_ready boolean default false;
 ```
 
-### 1.2  “Store-then-embed” pipeline (**MUST NOT BLOCK UI**)
+### 1.2  "Store-then-embed" pipeline (**MUST NOT BLOCK UI**)
 
 1. **API flow** in `/chat` route
 
    ```text
    a. INSERT new row (role='user') → return `msg_id` to caller
-   b. enqueue “embed” job with { msg_id, content }
+   b. enqueue "embed" job with { msg_id, content }
    c. respond HTTP 202 to frontend so it can optimistically render
    ```
 2. **Embed worker** (`/jobs/embed.ts`)
@@ -116,17 +114,17 @@ openai.chat.completions.create({
 Everything runs in **three cron workers** to keep memory low.
 All jobs read the *delta* since their previous run.
 
-### 2.1  Job A – “Metrics + KG + Dedup” (called every 10 min)
+### 2.1  Job A – "Metrics + KG + Dedup" (called every 10 min)
 
 | Sub-task                          | Details                                                                                                                                          |
 | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Load batch**                    | `SELECT * FROM messages WHERE created_at > last_run_ts AND embed_ready=true`                                                                     |
-| **Sentiment**                     | Call `gpt-4o-mini-2024-07-18` with *system*: “Return an integer –5 to +5 for sentiment of the text”; store in `sentiment`. Extremely negative emotion, anger, fear, despair gets -5, Neutral statement of fact gets 0 and Highly positive emotion, joy, gratitude, praise gets +5.                          |
-| **Excitement** (emotional weight) | Same model, 0–1 scale (“boring” 0 → “exciting” 1).                                                                                               |
-| **Helpfulness**                   | Prompt: “For a future self who revisits this conversation, how helpful is the information (0–1)?”                                                |
+| **Sentiment**                     | Call `gpt-4o-mini-2024-07-18` with *system*: "Return an integer –5 to +5 for sentiment of the text"; store in `sentiment`. Extremely negative emotion, anger, fear, despair gets -5, Neutral statement of fact gets 0 and Highly positive emotion, joy, gratitude, praise gets +5.                          |
+| **Excitement** (emotional weight) | Same model, 0–1 scale ("boring" 0 → "exciting" 1).                                                                                               |
+| **Helpfulness**                   | Prompt: "For a future self who revisits this conversation, how helpful is the information (0–1)?"                                                |
 | **Novelty**                       | `1 – MAX(cosine)` against previous 500 messages from the same use (pgvector).                                                                                      |
-| **Triple extraction**             | Prompt `gpt-4o-mini-2024-07-18`: “SYSTEM: Extract up to 3 factual (subject, relation, object) triples from the text.
-Return JSON list [{"s":"", "p":"", "o":""}]. Use canonical names if possible.”.                                                  |
+| **Triple extraction**             | Prompt `gpt-4o-mini-2024-07-18`: "SYSTEM: Extract up to 3 factual (subject, relation, object) triples from the text.
+Return JSON list [{"s":"", "p":"", "o":""}]. Use canonical names if possible."                                                  |
 | **KG merge**                      | For each triple: `INSERT ... ON CONFLICT (label) DO NOTHING` into `kg_nodes`; same for `kg_edges` with `weight = weight + 1`.                    |
 | **Centrality (edge-level)**       | Keep a rolling degree centrality per `kg_node` in a side table; update counts incrementally (no full graph yet).                                 |
 | **Priority compute**              | `priority = 0.7*novelty + 0.3*excitement + 0.2*helpfulness + 0.2*centrality_normalised + 0.1*ABS(Sentiment)` (weights editable ENV).                                  |
@@ -140,15 +138,15 @@ Extract up to three factual triples in JSON with keys "s", "p", "o". Use real en
 Example output:
 [{"s":"Alice","p":"works_at","o":"ACME Corp"},{"s":"Project Beta","p":"deadline","o":"2024-12-31"}]
 
-   * Canonicalisation rules:
+   * Canonicalisation rules (✅ IMPLEMENTED):
 
 Lower-case and trim whitespace.
 
-Apply a small synonym dictionary (e.g., “wife” → “spouse”).
-
-If the synonym lookup fails, compute the embedding of the candidate label; if its cosine distance from an existing node label’s embedding is less than 0.15, treat them as the same node.
+Compute the embedding of the candidate label; if its cosine distance from an existing node label's embedding is less than 0.15, treat them as the same node.
 
 Otherwise create a fresh node.
+
+Note: Synonym dictionary approach was removed in favor of embedding-based similarity only. ANN indexes (ivfflat/hnsw) are not used due to 2000-dimension limit in pgvector 0.8.0 vs our 3072-dimension embeddings. Uses batch embedding calls and retry-resilient caching.
 
    * Merging:
 
@@ -171,7 +169,7 @@ This job should only run if there have been any new messages from any user.
 For any message, this job should run first, before the hourly clustering or fine-tuning jobs.
 
 
-### 2.2  Job B – “Hourly Graph & Clustering”
+### 2.2  Job B – "Hourly Graph & Clustering"
 
    * Similarity graph overview
 Build an in-memory graph whose nodes are messages created since the previous run plus their nearest neighbours:
@@ -219,7 +217,7 @@ For each message, compute the mean of eig_cent across its nodes. Write that to m
 
 Recalculate priority with the same coefficients but using the new centrality value; write back to messages.priority, overwriting the provisional figure.
 
-### 2.3  Job C – “Daily Insights & Fine-tune Prep”
+### 2.3  Job C – "Daily Insights & Fine-tune Prep"
 
    * Overview
 Select the 1 000 messages from the last 24 h with the highest priority values.
@@ -246,7 +244,7 @@ POST that model ID to a tiny Vercel API route that updates an environment variab
 | Stage             | Action                                                                                                                                                             |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Gather            | Top 1 000 messages by `priority` in the last 24 h.                                                                                                                 |
-| Cluster summaries | For each `cluster_id` call GPT-4o: “Summarise cluster X in <200 words> and propose one insight.”                                                                   |
+| Cluster summaries | For each `cluster_id` call GPT-4o: "Summarise cluster X in <200 words> and propose one insight."                                                                   |
 | Insight JSON      | Model replies with `{insight, evidence_ids[]}`.                                                                                                                    |
 | Persist           | Insert a new `messages` row (`role='introspection'`) per insight; mark `embed_ready=false` so Job A embeds it on next tick.                                        |
 | Fine-tune file    | For each insight create:<br>`USER: {{auto-question}}\nASSISTANT: {{insight}}` (auto-question generated in same call). Store NDJSON in `/tmp/ft.jsonl`.             |
@@ -258,10 +256,10 @@ POST that model ID to a tiny Vercel API route that updates an environment variab
 
 | Metric          | Semantics                                                           | Extraction prompt snippet                          |
 | --------------- | ------------------------------------------------------------------- | -------------------------------------------------- |
-| **sentiment**   | −5 very negative → +5 very positive                                 | “Return only an integer between –5 and +5.”        |
-| **excitement**  | 0 dull fact • 1 breaking, emotionally charged                       | “Rate 0 (not exciting) … 1 (very exciting).”       |
-| **helpfulness** | 0 irrelevant • 1 directly actionable fact                           | “How helpful will this be to the same user later?” |
-| **topic**       | One label from *Finance, Coding, Planning, Personal, Entertainment* | “Return exactly one topic from the list.”          |
+| **sentiment**   | −5 very negative → +5 very positive                                 | "Return only an integer between –5 and +5."        |
+| **excitement**  | 0 dull fact • 1 breaking, emotionally charged                       | "Rate 0 (not exciting) … 1 (very exciting)."       |
+| **helpfulness** | 0 irrelevant • 1 directly actionable fact                           | "How helpful will this be to the same user later?" |
+| **topic**       | One label from *Finance, Coding, Planning, Personal, Entertainment* | "Return exactly one topic from the list."          |
 
 ---
 
@@ -492,7 +490,7 @@ We want to implement phase 2 and I recommend reading phase 2 and 3 details first
   - `messages` table: `cluster_id` column.
   - `cluster_members` table: (cluster_id, msg_id).
 - **Edge Cases**:
-  - Handle messages that don’t fit any cluster (singleton clusters) by giving them their own cluster ids.
+  - Handle messages that don't fit any cluster (singleton clusters) by giving them their own cluster ids.
   - Allow for cluster merging/splitting as new data arrives.
   - For users sending the first message the graph should get created with the first few messages and clustering should occur without errors.
 
@@ -500,7 +498,7 @@ We want to implement phase 2 and I recommend reading phase 2 and 3 details first
 - **Trigger**: After clustering.
 - **Logic**:
   - For each KG node which has been added since the last time the job ran, calculate eigenvector centrality.
-  - Centrality reflects how “important” or “connected” a node/message is in the knowledge graph.
+  - Centrality reflects how "important" or "connected" a node/message is in the knowledge graph.
   - Update `centrality` column in `messages` and/or `kg_nodes` table.
   - Recalculate priority of each message for which the new eigenvector centrality has been calculated.
 - **Database**:
@@ -528,7 +526,7 @@ We want to implement phase 2 and I recommend reading phase 2 and 3 details first
 - **Trigger**: After clustering is complete (JobA-2).
 - **Logic**:
   - For each cluster, gather all messages (or a sample).
-  - Use OpenAI (e.g., GPT-4o) to generate a concise summary of the cluster’s main idea(s).
+  - Use OpenAI (e.g., GPT-4o) to generate a concise summary of the cluster's main idea(s).
   - Store the summary in a new `summary` column in the `clusters` table.
 - **Database**:
   - `clusters` table: `cluster_id`, `summary`, `label`, `created_at`, `updated_at`.
@@ -539,7 +537,7 @@ We want to implement phase 2 and I recommend reading phase 2 and 3 details first
 #### 2. **Cluster Labeling**
 - **Trigger**: After summarization.
 - **Logic**:
-  - Use OpenAI to generate a short label/title for each cluster (e.g., “Travel Memories”, “Work Advice”).
+  - Use OpenAI to generate a short label/title for each cluster (e.g., "Travel Memories", "Work Advice").
   - Store in `label` column in `clusters` table.
 - **Database**:
   - `clusters` table: `label`.
@@ -563,7 +561,7 @@ We want to implement phase 2 and I recommend reading phase 2 and 3 details first
 
 #### 1. **Cluster Browsing UI**
 - **Frontend**:
-  - Add a “Clusters” or “Topics” tab/page.
+  - Add a "Clusters" or "Topics" tab/page.
   - List all clusters for the user, showing label and summary.
   - Clicking a cluster shows all member messages and their details (metrics, KG links, etc.).
 - **Backend**:
@@ -576,7 +574,7 @@ We want to implement phase 2 and I recommend reading phase 2 and 3 details first
 
 #### 2. **Deduplication & Canonicalization in UI**
 - **Frontend**:
-  - Indicate when a message is a duplicate (e.g., “This is a duplicate of message X”).
+  - Indicate when a message is a duplicate (e.g., "This is a duplicate of message X").
   - Option to view the canonical/original message.
 - **Backend**:
   - API returns `duplicate_of` and canonical message info.
@@ -584,13 +582,13 @@ We want to implement phase 2 and I recommend reading phase 2 and 3 details first
 #### 3. **Advanced Search**
 - **Frontend**:
   - Add search bar for messages, clusters, and KG nodes.
-  - Support search by content, label, summary, or metrics (e.g., “show me all excited messages about travel”).
+  - Support search by content, label, summary, or metrics (e.g., "show me all excited messages about travel").
 - **Backend**:
   - API endpoint for search, leveraging pgvector for semantic search and filters for metrics/labels.
 
 #### 4. **Knowledge Graph Visualization**
 - **Frontend**:
-  - Visualize the user’s knowledge graph (nodes = concepts, edges = relationships).
+  - Visualize the user's knowledge graph (nodes = concepts, edges = relationships).
   - Allow clicking nodes to see related messages/clusters.
 - **Backend**:
   - API endpoint to fetch KG nodes/edges for visualization.
@@ -598,7 +596,7 @@ We want to implement phase 2 and I recommend reading phase 2 and 3 details first
 #### 5. **Metrics & Insights**
 - **Frontend**:
   - Show aggregate metrics for clusters (average excitement, helpfulness, etc.).
-  - Highlight most “novel” or “central” memories.
+  - Highlight most "novel" or "central" memories.
 - **Backend**:
   - API endpoints to fetch metrics per cluster/message.
 
